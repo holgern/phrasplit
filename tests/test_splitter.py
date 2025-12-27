@@ -15,8 +15,9 @@ class TestSplitSentences:
     def test_ellipses_handling(self) -> None:
         """Test handling of ellipses in sentence splitting.
 
-        Note: spaCy doesn't split after ellipsis unless followed by sentence-ending punctuation.
-        Ellipses are restored as '. . .' (spaced) after processing.
+        Note: spaCy doesn't split after ellipsis unless followed by
+        sentence-ending punctuation. Ellipses are restored as '. . .'
+        (spaced) after processing.
         """
         text = "Hello... Is it working? Yes... it is!"
         expected = ["Hello. . . Is it working?", "Yes. . . it is!"]
@@ -41,7 +42,7 @@ class TestSplitSentences:
         assert split_sentences(text) == expected
 
     def test_initials_and_titles(self) -> None:
-        """Check titles and initials are handled gracefully without breaking sentence."""
+        """Check titles and initials are handled without breaking sentence."""
         text = "Mr. J.R.R. Tolkien wrote many books. They were popular."
         expected = ["Mr. J.R.R. Tolkien wrote many books.", "They were popular."]
         assert split_sentences(text) == expected
@@ -321,7 +322,10 @@ class TestSplitLongLines:
 
     def test_clause_splitting_for_long_sentences(self) -> None:
         """Test that long sentences are split at clause boundaries."""
-        text = "This is a very long sentence with many clauses, and it continues here, and it goes on further."
+        text = (
+            "This is a very long sentence with many clauses, "
+            "and it continues here, and it goes on further."
+        )
         result = split_long_lines(text, max_length=50)
         assert len(result) >= 2
 

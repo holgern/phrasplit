@@ -13,6 +13,37 @@ console = Console()
 error_console = Console(stderr=True)
 
 
+def read_input(input_file: Optional[str]) -> str:
+    """Read input from file or stdin.
+
+    Args:
+        input_file: Path to input file, '-' for stdin, or None for stdin
+
+    Returns:
+        Text content
+    """
+    if input_file is None or input_file == "-":
+        return sys.stdin.read()
+    return Path(input_file).read_text(encoding="utf-8")
+
+
+def write_output(text: str, output: Optional[Path], use_rich: bool = True) -> None:
+    """Write output to file or stdout.
+
+    Args:
+        text: Text to write
+        output: Output file path or None for stdout
+        use_rich: Whether to use rich console for stdout
+    """
+    if output:
+        output.write_text(text, encoding="utf-8")
+        error_console.print(f"[green]Output written to {output}[/green]")
+    elif use_rich:
+        console.print(text)
+    else:
+        print(text)
+
+
 @click.group()
 @click.version_option()
 def main() -> None:
@@ -21,7 +52,7 @@ def main() -> None:
 
 
 @main.command()
-@click.argument("input_file", type=click.Path(exists=True, path_type=Path))
+@click.argument("input_file", required=False, default=None)
 @click.option(
     "-o",
     "--output",
@@ -35,12 +66,19 @@ def main() -> None:
     help="spaCy language model (default: en_core_web_sm)",
 )
 def sentences(
-    input_file: Path,
+    input_file: Optional[str],
     output: Optional[Path],
     model: str,
 ) -> None:
-    """Split text into sentences."""
-    text = input_file.read_text(encoding="utf-8")
+    """Split text into sentences.
+
+    INPUT_FILE: Path to input file, or '-' for stdin. Reads from stdin if omitted.
+    """
+    try:
+        text = read_input(input_file)
+    except FileNotFoundError:
+        error_console.print(f"[red]Error:[/red] File not found: {input_file}")
+        sys.exit(1)
 
     try:
         result = split_sentences(text, language_model=model)
@@ -49,16 +87,11 @@ def sentences(
         sys.exit(1)
 
     output_text = "\n".join(result)
-
-    if output:
-        output.write_text(output_text, encoding="utf-8")
-        console.print(f"[green]Output written to {output}[/green]")
-    else:
-        console.print(output_text)
+    write_output(output_text, output)
 
 
 @main.command()
-@click.argument("input_file", type=click.Path(exists=True, path_type=Path))
+@click.argument("input_file", required=False, default=None)
 @click.option(
     "-o",
     "--output",
@@ -72,12 +105,19 @@ def sentences(
     help="spaCy language model (default: en_core_web_sm)",
 )
 def clauses(
-    input_file: Path,
+    input_file: Optional[str],
     output: Optional[Path],
     model: str,
 ) -> None:
-    """Split text into clauses (at commas, semicolons, colons, dashes)."""
-    text = input_file.read_text(encoding="utf-8")
+    """Split text into clauses (at commas).
+
+    INPUT_FILE: Path to input file, or '-' for stdin. Reads from stdin if omitted.
+    """
+    try:
+        text = read_input(input_file)
+    except FileNotFoundError:
+        error_console.print(f"[red]Error:[/red] File not found: {input_file}")
+        sys.exit(1)
 
     try:
         result = split_clauses(text, language_model=model)
@@ -86,16 +126,11 @@ def clauses(
         sys.exit(1)
 
     output_text = "\n".join(result)
-
-    if output:
-        output.write_text(output_text, encoding="utf-8")
-        console.print(f"[green]Output written to {output}[/green]")
-    else:
-        console.print(output_text)
+    write_output(output_text, output)
 
 
 @main.command()
-@click.argument("input_file", type=click.Path(exists=True, path_type=Path))
+@click.argument("input_file", required=False, default=None)
 @click.option(
     "-o",
     "--output",
@@ -103,24 +138,26 @@ def clauses(
     help="Output file (default: stdout)",
 )
 def paragraphs(
-    input_file: Path,
+    input_file: Optional[str],
     output: Optional[Path],
 ) -> None:
-    """Split text into paragraphs."""
-    text = input_file.read_text(encoding="utf-8")
+    """Split text into paragraphs.
+
+    INPUT_FILE: Path to input file, or '-' for stdin. Reads from stdin if omitted.
+    """
+    try:
+        text = read_input(input_file)
+    except FileNotFoundError:
+        error_console.print(f"[red]Error:[/red] File not found: {input_file}")
+        sys.exit(1)
 
     result = split_paragraphs(text)
     output_text = "\n\n".join(result)
-
-    if output:
-        output.write_text(output_text, encoding="utf-8")
-        console.print(f"[green]Output written to {output}[/green]")
-    else:
-        console.print(output_text)
+    write_output(output_text, output)
 
 
 @main.command()
-@click.argument("input_file", type=click.Path(exists=True, path_type=Path))
+@click.argument("input_file", required=False, default=None)
 @click.option(
     "-o",
     "--output",
@@ -141,13 +178,20 @@ def paragraphs(
     help="spaCy language model (default: en_core_web_sm)",
 )
 def longlines(
-    input_file: Path,
+    input_file: Optional[str],
     output: Optional[Path],
     max_length: int,
     model: str,
 ) -> None:
-    """Split long lines at sentence/clause boundaries."""
-    text = input_file.read_text(encoding="utf-8")
+    """Split long lines at sentence/clause boundaries.
+
+    INPUT_FILE: Path to input file, or '-' for stdin. Reads from stdin if omitted.
+    """
+    try:
+        text = read_input(input_file)
+    except FileNotFoundError:
+        error_console.print(f"[red]Error:[/red] File not found: {input_file}")
+        sys.exit(1)
 
     try:
         result = split_long_lines(text, max_length=max_length, language_model=model)
@@ -156,12 +200,7 @@ def longlines(
         sys.exit(1)
 
     output_text = "\n".join(result)
-
-    if output:
-        output.write_text(output_text, encoding="utf-8")
-        console.print(f"[green]Output written to {output}[/green]")
-    else:
-        console.print(output_text)
+    write_output(output_text, output)
 
 
 if __name__ == "__main__":
