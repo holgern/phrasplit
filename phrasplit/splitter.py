@@ -113,21 +113,20 @@ def split_sentences(
 
 def _split_sentence_into_clauses(sentence: str) -> list[str]:
     """
-    Split a sentence into clauses at punctuation boundaries.
+    Split a sentence into comma-separated parts for audiobook creation.
 
-    Splits at commas, semicolons, colons, and dashes, keeping the
-    delimiter at the end of each clause.
+    Splits only at commas, keeping the comma at the end of each part.
+    This creates natural pause points for text-to-speech processing.
 
     Args:
         sentence: A single sentence
 
     Returns:
-        List of clauses
+        List of comma-separated parts
     """
-    # Pattern to split after comma/semicolon/colon/dash followed by space
-    # but keep the delimiter with the preceding text
-    # Using positive lookbehind to keep delimiter at end of clause
-    parts = re.split(r"(?<=[,;:\u2014\u2013])\s+", sentence)
+    # Pattern to split after comma followed by space
+    # Using positive lookbehind to keep comma at end of clause
+    parts = re.split(r"(?<=,)\s+", sentence)
 
     # Filter empty parts and strip whitespace
     clauses = [p.strip() for p in parts if p.strip()]
@@ -140,17 +139,18 @@ def split_clauses(
     language_model: str = "en_core_web_sm",
 ) -> list[str]:
     """
-    Split text into clauses (split at commas, semicolons, colons, dashes).
+    Split text into comma-separated parts for audiobook creation.
 
-    Uses spaCy for sentence detection, then splits each sentence at clause
-    boundaries. The delimiter stays at the end of each clause.
+    Uses spaCy for sentence detection, then splits each sentence at commas.
+    The comma stays at the end of each part, creating natural pause points
+    for text-to-speech processing.
 
     Args:
         text: Input text
         language_model: spaCy language model to use
 
     Returns:
-        List of clauses
+        List of comma-separated parts
 
     Example:
         Input: "I do like coffee, and I like wine."
@@ -185,7 +185,7 @@ def split_clauses(
 
 def _split_at_clauses(text: str, max_length: int) -> list[str]:
     """
-    Split text at clause boundaries (commas, semicolons, colons, dashes).
+    Split text at comma boundaries for audiobook creation.
 
     Args:
         text: Text to split
@@ -194,8 +194,8 @@ def _split_at_clauses(text: str, max_length: int) -> list[str]:
     Returns:
         List of lines
     """
-    # Split at clause boundaries, keeping the delimiter with the preceding text
-    parts = re.split(r"(?<=[,;:\u2014\u2013])\s+", text)
+    # Split at commas, keeping the comma with the preceding text
+    parts = re.split(r"(?<=,)\s+", text)
 
     result: list[str] = []
     current_line = ""

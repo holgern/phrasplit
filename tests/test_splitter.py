@@ -1,7 +1,5 @@
 """Tests for phrasplit splitter module."""
 
-import pytest
-
 from phrasplit import split_clauses, split_long_lines, split_paragraphs, split_sentences
 
 
@@ -89,7 +87,7 @@ class TestSplitSentences:
 
 
 class TestSplitClauses:
-    """Tests for split_clauses function."""
+    """Tests for split_clauses function - splits at commas for audiobook creation."""
 
     def test_basic_clauses(self) -> None:
         """Test splitting at commas."""
@@ -97,26 +95,26 @@ class TestSplitClauses:
         expected = ["I like coffee,", "and I like tea."]
         assert split_clauses(text) == expected
 
-    def test_semicolon_split(self) -> None:
-        """Test splitting at semicolons."""
+    def test_semicolon_no_split(self) -> None:
+        """Test that semicolons do not cause splits."""
         text = "First clause; second clause."
-        expected = ["First clause;", "second clause."]
+        expected = ["First clause; second clause."]
         assert split_clauses(text) == expected
 
-    def test_colon_split(self) -> None:
-        """Test splitting at colons."""
+    def test_colon_no_split(self) -> None:
+        """Test that colons do not cause splits."""
         text = "Here is the list: apples and oranges."
-        expected = ["Here is the list:", "apples and oranges."]
+        expected = ["Here is the list: apples and oranges."]
         assert split_clauses(text) == expected
 
-    def test_multiple_delimiters(self) -> None:
-        """Test splitting with multiple different delimiters."""
-        text = "First, second; third: fourth."
-        expected = ["First,", "second;", "third:", "fourth."]
+    def test_multiple_commas(self) -> None:
+        """Test splitting with multiple commas."""
+        text = "First, second, third, fourth."
+        expected = ["First,", "second,", "third,", "fourth."]
         assert split_clauses(text) == expected
 
-    def test_no_clause_delimiters(self) -> None:
-        """Test text without clause delimiters."""
+    def test_no_commas(self) -> None:
+        """Test text without commas."""
         text = "This is a simple sentence."
         expected = ["This is a simple sentence."]
         assert split_clauses(text) == expected
@@ -124,6 +122,138 @@ class TestSplitClauses:
     def test_empty_text(self) -> None:
         """Test empty input returns empty list."""
         assert split_clauses("") == []
+
+    def test_em_dash_no_split(self) -> None:
+        """Test that em dashes (—) do not cause splits."""
+        text = "She was happy— he was not."
+        expected = ["She was happy— he was not."]
+        assert split_clauses(text) == expected
+
+    def test_en_dash_no_split(self) -> None:
+        """Test that en dashes (–) do not cause splits."""
+        text = "The years 2020–2023 were difficult– we survived."
+        expected = ["The years 2020–2023 were difficult– we survived."]
+        assert split_clauses(text) == expected
+
+    def test_complex_sentence_with_multiple_commas(self) -> None:
+        """Test splitting a sentence with multiple comma-separated items."""
+        text = "Apples, oranges, bananas, and grapes are fruits."
+        expected = ["Apples,", "oranges,", "bananas,", "and grapes are fruits."]
+        assert split_clauses(text) == expected
+
+    def test_sentence_with_commas_and_other_punctuation(self) -> None:
+        """Test sentence with commas and other punctuation (only splits at commas)."""
+        text = "When I arrived, he said: 'Welcome home'; then we celebrated."
+        expected = ["When I arrived,", "he said: 'Welcome home'; then we celebrated."]
+        assert split_clauses(text) == expected
+
+    def test_colon_with_comma_list(self) -> None:
+        """Test colon introducing a list with commas (splits only at commas)."""
+        text = "Buy these items: milk, bread, eggs."
+        expected = ["Buy these items: milk,", "bread,", "eggs."]
+        assert split_clauses(text) == expected
+
+    def test_semicolon_with_commas(self) -> None:
+        """Test semicolon with surrounding commas (splits only at commas)."""
+        text = "The sun was setting, beautifully; the sky turned orange."
+        expected = ["The sun was setting,", "beautifully; the sky turned orange."]
+        assert split_clauses(text) == expected
+
+    def test_comma_with_coordinating_conjunction(self) -> None:
+        """Test comma before coordinating conjunctions (FANBOYS)."""
+        text = "I wanted to go, but it was raining."
+        expected = ["I wanted to go,", "but it was raining."]
+        assert split_clauses(text) == expected
+
+    def test_introductory_clause_with_comma(self) -> None:
+        """Test introductory clause followed by main clause."""
+        text = "After the meeting ended, everyone went home."
+        expected = ["After the meeting ended,", "everyone went home."]
+        assert split_clauses(text) == expected
+
+    def test_appositive_with_commas(self) -> None:
+        """Test appositive phrase set off by commas."""
+        text = "My friend, a talented artist, won the competition."
+        expected = ["My friend,", "a talented artist,", "won the competition."]
+        assert split_clauses(text) == expected
+
+    def test_mixed_punctuation_only_comma_splits(self) -> None:
+        """Test complex sentence - only commas cause splits."""
+        text = "First, I woke up; then, I made coffee: black, no sugar."
+        expected = ["First,", "I woke up; then,", "I made coffee: black,", "no sugar."]
+        assert split_clauses(text) == expected
+
+    def test_quotes_with_comma(self) -> None:
+        """Test handling of quoted text with commas.
+
+        Note: Comma inside quotes like '"Hello,"' is not followed by space
+        directly (the quote closes first), so spaCy treats it as one token.
+        """
+        text = '"Hello," she said, "how are you?"'
+        expected = ['"Hello," she said,', '"how are you?"']
+        assert split_clauses(text) == expected
+
+    def test_direct_speech_with_comma(self) -> None:
+        """Test direct speech attribution with comma.
+
+        Note: Comma inside quotes like '"I am here,"' is part of the quoted
+        text, so no split occurs there.
+        """
+        text = '"I am here," said John.'
+        expected = ['"I am here," said John.']
+        assert split_clauses(text) == expected
+
+    def test_comma_outside_quotes(self) -> None:
+        """Test comma outside quotes causes split."""
+        text = 'He said "hello", then left.'
+        expected = ['He said "hello",', "then left."]
+        assert split_clauses(text) == expected
+
+    def test_serial_comma_oxford(self) -> None:
+        """Test sentence with Oxford/serial comma."""
+        text = "We invited John, Mary, and Tom to the party."
+        expected = ["We invited John,", "Mary,", "and Tom to the party."]
+        assert split_clauses(text) == expected
+
+    def test_parenthetical_with_commas(self) -> None:
+        """Test parenthetical expression set off by commas."""
+        text = "The book, which was published last year, became a bestseller."
+        expected = [
+            "The book,",
+            "which was published last year,",
+            "became a bestseller.",
+        ]
+        assert split_clauses(text) == expected
+
+    def test_address_with_commas(self) -> None:
+        """Test address or location with commas."""
+        text = "She lives in Paris, France, near the Eiffel Tower."
+        expected = ["She lives in Paris,", "France,", "near the Eiffel Tower."]
+        assert split_clauses(text) == expected
+
+    def test_date_with_commas(self) -> None:
+        """Test date format with commas."""
+        text = "On July 4, 1776, the Declaration was signed."
+        expected = ["On July 4,", "1776,", "the Declaration was signed."]
+        assert split_clauses(text) == expected
+
+    def test_however_with_commas(self) -> None:
+        """Test conjunctive adverb with commas."""
+        text = "The weather was bad, however, we went outside."
+        expected = ["The weather was bad,", "however,", "we went outside."]
+        assert split_clauses(text) == expected
+
+    def test_comma_after_interjection(self) -> None:
+        """Test comma after interjection."""
+        text = "Well, that was unexpected."
+        expected = ["Well,", "that was unexpected."]
+        assert split_clauses(text) == expected
+
+    def test_compound_sentence_with_comma(self) -> None:
+        """Test compound sentence joined by comma and conjunction."""
+        text = "The cat slept, and the dog played outside."
+        expected = ["The cat slept,", "and the dog played outside."]
+        assert split_clauses(text) == expected
 
 
 class TestSplitParagraphs:
