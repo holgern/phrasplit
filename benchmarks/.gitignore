@@ -1,0 +1,9 @@
+# Downloaded datasets
+testsets/
+
+# Evaluation outputs
+outfiles/
+
+# Python cache
+__pycache__/
+*.pyc

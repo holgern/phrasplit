@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from phrasplit.abbreviations import get_abbreviations, get_sentence_starters
+
 if TYPE_CHECKING:
     from spacy.language import Language  # type: ignore[import-not-found]
 
@@ -25,6 +27,13 @@ _ELLIPSIS_PLACEHOLDER = "\u2026"  # Unicode ellipsis character
 
 # Regex for hyphenated line breaks (e.g., "recom-\nmendation" -> "recommendation")
 _HYPHENATED_LINEBREAK = re.compile(r"(\w+)-\s*\n\s*(\w+)")
+
+# URL pattern for splitting
+_URL_PATTERN = re.compile(r"(https?://\S+)")
+
+# Pattern to detect abbreviation at end of sentence
+# Matches: word ending with period, where word (without period) is in abbreviations
+_ABBREV_END_PATTERN = re.compile(r"(\b[A-Za-z]+)\.\s*$")
 
 
 def _fix_hyphenated_linebreaks(text: str) -> str:
@@ -107,6 +116,171 @@ def _restore_ellipsis(text: str) -> str:
     return text.replace(_ELLIPSIS_PLACEHOLDER, ". . .")
 
 
+def _split_urls(sentences: list[str]) -> list[str]:
+    """
+    Split sentences that contain multiple URLs.
+
+    URLs are often listed one per line in source text, but spaCy may merge them.
+    This function splits sentences only when there are 2+ URLs present.
+
+    Args:
+        sentences: List of sentences from spaCy
+
+    Returns:
+        List of sentences with multiple URLs properly separated
+    """
+    result: list[str] = []
+
+    for sent in sentences:
+        # Check if sentence contains URLs
+        if "http://" not in sent and "https://" not in sent:
+            result.append(sent)
+            continue
+
+        # Count URLs in the sentence
+        url_matches = list(_URL_PATTERN.finditer(sent))
+
+        # Only split if there are multiple URLs
+        if len(url_matches) < 2:
+            result.append(sent)
+            continue
+
+        # Split at URL boundaries - each URL becomes its own "sentence"
+        # along with any text that follows it until the next URL
+        last_end = 0
+        for i, match in enumerate(url_matches):
+            # Text before this URL (only for first URL)
+            if i == 0 and match.start() > 0:
+                prefix = sent[: match.start()].strip()
+                if prefix:
+                    # Include prefix with first URL
+                    next_url_start = (
+                        url_matches[i + 1].start()
+                        if i + 1 < len(url_matches)
+                        else len(sent)
+                    )
+                    part = sent[:next_url_start].strip()
+                    result.append(part)
+                    last_end = next_url_start
+                    continue
+
+            # For subsequent URLs or if no prefix
+            if match.start() >= last_end:
+                next_url_start = (
+                    url_matches[i + 1].start()
+                    if i + 1 < len(url_matches)
+                    else len(sent)
+                )
+                part = sent[match.start() : next_url_start].strip()
+                if part:
+                    result.append(part)
+                last_end = next_url_start
+
+    return result
+
+
+def _merge_abbreviation_splits(
+    sentences: list[str],
+    language_model: str = "en_core_web_sm",
+) -> list[str]:
+    """
+    Merge sentences that were incorrectly split after abbreviations.
+
+    spaCy sometimes splits after abbreviations like "M.D." or "U.S." when
+    followed by a name or continuation. This function merges such cases.
+
+    Conservative approach: only merge if:
+    1. Previous sentence ends with a known abbreviation + period
+    2. Next sentence starts with a capital letter (likely a name/continuation)
+    3. Next sentence does NOT start with a common sentence starter
+
+    Args:
+        sentences: List of sentences from spaCy
+        language_model: spaCy language model name (for language-specific abbreviations)
+
+    Returns:
+        List of sentences with abbreviation splits merged
+    """
+    # Get language-specific abbreviations
+    abbreviations = get_abbreviations(language_model)
+
+    # If no abbreviations for this language, return unchanged
+    if not abbreviations:
+        return sentences
+
+    if len(sentences) <= 1:
+        return sentences
+
+    # Get common sentence starters
+    sentence_starters = get_sentence_starters()
+
+    result: list[str] = []
+    i = 0
+
+    while i < len(sentences):
+        current = sentences[i]
+
+        # Check if we should merge with the next sentence
+        if i + 1 < len(sentences):
+            next_sent = sentences[i + 1]
+
+            # Check if current sentence ends with an abbreviation
+            match = _ABBREV_END_PATTERN.search(current)
+            if match:
+                abbrev = match.group(1)
+                # Check if it's a known abbreviation for this language
+                if abbrev in abbreviations:
+                    # Check if next sentence starts with a word that's likely a name
+                    # (capital letter, not a common sentence starter)
+                    next_words = next_sent.split()
+                    if next_words:
+                        first_word = next_words[0]
+                        # Merge if first word is capitalized but not a sentence starter
+                        # and not all caps (which might be an acronym/heading)
+                        if (
+                            first_word[0].isupper()
+                            and first_word not in sentence_starters
+                            and not first_word.isupper()
+                        ):
+                            # Merge the sentences
+                            merged = current + " " + next_sent
+                            result.append(merged)
+                            i += 2
+                            continue
+
+        result.append(current)
+        i += 1
+
+    return result
+
+
+def _apply_corrections(
+    sentences: list[str],
+    language_model: str = "en_core_web_sm",
+) -> list[str]:
+    """
+    Apply post-processing corrections to fix common spaCy segmentation errors.
+
+    Corrections applied (in order):
+    1. Merge sentences incorrectly split after abbreviations (reduces count)
+    2. Split sentences containing multiple URLs (increases count)
+
+    Args:
+        sentences: List of sentences from spaCy
+        language_model: spaCy language model name (for language-specific corrections)
+
+    Returns:
+        Corrected list of sentences
+    """
+    # First merge abbreviation splits (need to combine before URL split)
+    sentences = _merge_abbreviation_splits(sentences, language_model)
+
+    # Then split URLs (increases sentence count)
+    sentences = _split_urls(sentences)
+
+    return sentences
+
+
 def _get_nlp(language_model: str = "en_core_web_sm") -> Language:
     """Get or load a spaCy model (cached).
 
@@ -159,6 +333,7 @@ def split_paragraphs(text: str) -> list[str]:
 def split_sentences(
     text: str,
     language_model: str = "en_core_web_sm",
+    apply_corrections: bool = True,
 ) -> list[str]:
     """
     Split text into sentences using spaCy.
@@ -166,6 +341,9 @@ def split_sentences(
     Args:
         text: Input text
         language_model: spaCy language model to use
+        apply_corrections: Whether to apply post-processing corrections for
+            common spaCy errors (URL splitting, abbreviation handling).
+            Default is True.
 
     Returns:
         List of sentences
@@ -189,6 +367,10 @@ def split_sentences(
             # Restore ellipsis in the sentence
             sent = _restore_ellipsis(sent)
             result.append(sent)
+
+    # Apply post-processing corrections if enabled
+    if apply_corrections:
+        result = _apply_corrections(result, language_model)
 
     return result
 
