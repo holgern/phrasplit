@@ -3,36 +3,18 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from spacy.language import Language
+    from spacy.language import Language  # type: ignore[import-not-found]
 
 try:
-    import spacy
+    import spacy  # type: ignore[import-not-found]
 
     SPACY_AVAILABLE = True
 except ImportError:
     SPACY_AVAILABLE = False
-    spacy = None  # type: ignore[assignment]
-
-
-class SpaCyDoc(Protocol):
-    """Protocol for spaCy Doc objects."""
-
-    @property
-    def sents(self) -> list[SpaCySent]:
-        """Return sentence spans."""
-        ...
-
-
-class SpaCySent(Protocol):
-    """Protocol for spaCy Span objects representing sentences."""
-
-    @property
-    def text(self) -> str:
-        """Return the text of the span."""
-        ...
+    spacy = None
 
 
 # Cache for loaded spaCy model

@@ -149,10 +149,10 @@ longlines
    Split long lines at sentence/clause boundaries.
 
    Options:
-     -o, --output PATH     Output file (default: stdout)
-     -l, --max-length INT  Maximum line length (default: 80)
-     -m, --model TEXT      spaCy language model (default: en_core_web_sm)
-     --help                Show this message and exit.
+     -o, --output PATH        Output file (default: stdout)
+     -l, --max-length INTEGER Maximum line length (default: 80, must be >= 1)
+     -m, --model TEXT         spaCy language model (default: en_core_web_sm)
+     --help                   Show this message and exit.
 
 Examples
 --------

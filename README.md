@@ -119,10 +119,12 @@ Split lines exceeding max_length at sentence/clause boundaries.
 **Parameters:**
 
 - `text`: Input text string
-- `max_length`: Maximum line length in characters
+- `max_length`: Maximum line length in characters (must be >= 1)
 - `language_model`: spaCy model to use (default: "en_core_web_sm")
 
-**Returns:** List of lines, each within max_length
+**Returns:** List of lines, each within max_length (except single words exceeding limit)
+
+**Raises:** `ValueError` if max_length is less than 1
 
 ## Use Cases
 
