@@ -1,6 +1,15 @@
 """Tests for phrasplit splitter module."""
 
+import pytest
+
 from phrasplit import split_clauses, split_long_lines, split_paragraphs, split_sentences
+from phrasplit.splitter import (
+    _hard_split,
+    _protect_ellipsis,
+    _restore_ellipsis,
+    _split_at_clauses,
+    _split_sentence_into_clauses,
+)
 
 
 class TestSplitSentences:
@@ -329,6 +338,28 @@ class TestSplitLongLines:
         result = split_long_lines(text, max_length=50)
         assert len(result) >= 2
 
+    def test_max_length_validation_zero(self) -> None:
+        """Test that max_length=0 raises ValueError."""
+        with pytest.raises(ValueError, match="max_length must be at least 1"):
+            split_long_lines("Some text", max_length=0)
+
+    def test_max_length_validation_negative(self) -> None:
+        """Test that negative max_length raises ValueError."""
+        with pytest.raises(ValueError, match="max_length must be at least 1"):
+            split_long_lines("Some text", max_length=-5)
+
+    def test_max_length_one(self) -> None:
+        """Test max_length=1 works (words kept intact)."""
+        text = "a b c"
+        result = split_long_lines(text, max_length=1)
+        assert result == ["a", "b", "c"]
+
+    def test_empty_line_preserved(self) -> None:
+        """Test that empty lines in input are preserved."""
+        text = "First line.\n\nThird line."
+        result = split_long_lines(text, max_length=80)
+        assert result == ["First line.", "", "Third line."]
+
 
 class TestEdgeCases:
     """Test edge cases and special inputs."""
@@ -349,4 +380,189 @@ class TestEdgeCases:
         """Test text with special characters."""
         text = "Price is $100. Contact us at test@email.com."
         result = split_sentences(text)
+        assert len(result) == 2
+
+
+class TestEllipsisHandling:
+    """Tests for ellipsis protection and restoration functions."""
+
+    def test_protect_regular_ellipsis(self) -> None:
+        """Test protection of regular three-dot ellipsis."""
+        text = "Hello... world"
+        result = _protect_ellipsis(text)
+        assert "..." not in result
+        assert "\u2026" in result
+
+    def test_protect_long_ellipsis(self) -> None:
+        """Test protection of ellipsis with more than 3 dots."""
+        text = "Hello..... world"
+        result = _protect_ellipsis(text)
+        assert "....." not in result
+        assert "\u2026" in result
+
+    def test_protect_spaced_ellipsis(self) -> None:
+        """Test protection of spaced ellipsis (. . .)."""
+        text = "Hello. . . world"
+        result = _protect_ellipsis(text)
+        assert ". . ." not in result
+        assert "\u2026" in result
+
+    def test_protect_unicode_ellipsis_unchanged(self) -> None:
+        """Test that unicode ellipsis is already the placeholder."""
+        text = "Hello\u2026 world"
+        result = _protect_ellipsis(text)
+        assert result == text  # No change, already placeholder
+
+    def test_restore_ellipsis(self) -> None:
+        """Test restoration of ellipsis placeholder to spaced format."""
+        text = "Hello\u2026 world"
+        result = _restore_ellipsis(text)
+        assert result == "Hello. . . world"
+
+    def test_protect_and_restore_roundtrip(self) -> None:
+        """Test that protect then restore gives consistent output."""
+        original = "Wait... what?"
+        protected = _protect_ellipsis(original)
+        restored = _restore_ellipsis(protected)
+        assert restored == "Wait. . . what?"
+
+    def test_multiple_ellipses(self) -> None:
+        """Test handling multiple ellipses in same text."""
+        text = "One... Two... Three..."
+        protected = _protect_ellipsis(text)
+        restored = _restore_ellipsis(protected)
+        assert restored == "One. . . Two. . . Three. . ."
+
+
+class TestHardSplit:
+    """Tests for _hard_split internal function."""
+
+    def test_hard_split_basic(self) -> None:
+        """Test basic word splitting."""
+        text = "one two three four"
+        result = _hard_split(text, max_length=10)
+        assert result == ["one two", "three four"]
+
+    def test_hard_split_exact_fit(self) -> None:
+        """Test words that fit exactly."""
+        text = "ab cd"
+        result = _hard_split(text, max_length=5)
+        assert result == ["ab cd"]
+
+    def test_hard_split_single_word_too_long(self) -> None:
+        """Test single word exceeding max_length is kept intact."""
+        text = "superlongword"
+        result = _hard_split(text, max_length=5)
+        assert result == ["superlongword"]
+
+    def test_hard_split_empty_string(self) -> None:
+        """Test empty string returns original."""
+        result = _hard_split("", max_length=10)
+        assert result == [""]
+
+    def test_hard_split_whitespace_only(self) -> None:
+        """Test whitespace-only string returns original."""
+        result = _hard_split("   ", max_length=10)
+        assert result == ["   "]
+
+    def test_hard_split_single_word(self) -> None:
+        """Test single word returns that word."""
+        result = _hard_split("hello", max_length=10)
+        assert result == ["hello"]
+
+
+class TestSplitAtClauses:
+    """Tests for _split_at_clauses internal function."""
+
+    def test_split_at_clauses_basic(self) -> None:
+        """Test basic clause splitting."""
+        text = "First part, second part, third part."
+        result = _split_at_clauses(text, max_length=30)
+        assert len(result) >= 2
+
+    def test_split_at_clauses_no_commas(self) -> None:
+        """Test text without commas."""
+        text = "Just a single clause without commas."
+        result = _split_at_clauses(text, max_length=50)
+        assert result == ["Just a single clause without commas."]
+
+    def test_split_at_clauses_falls_back_to_hard_split(self) -> None:
+        """Test fallback to hard split when clauses still too long."""
+        text = "This is a very very very long clause without commas"
+        result = _split_at_clauses(text, max_length=15)
+        # Should be hard-split at word boundaries
+        assert len(result) >= 3
+        for line in result:
+            # Each line should be <= max_length unless it's a single word
+            assert len(line) <= 15 or len(line.split()) == 1
+
+
+class TestSplitSentenceIntoClauses:
+    """Tests for _split_sentence_into_clauses internal function."""
+
+    def test_basic_split(self) -> None:
+        """Test basic comma splitting."""
+        sentence = "First, second, third."
+        result = _split_sentence_into_clauses(sentence)
+        assert result == ["First,", "second,", "third."]
+
+    def test_no_commas(self) -> None:
+        """Test sentence without commas."""
+        sentence = "No commas here."
+        result = _split_sentence_into_clauses(sentence)
+        assert result == ["No commas here."]
+
+    def test_empty_sentence(self) -> None:
+        """Test empty sentence."""
+        result = _split_sentence_into_clauses("")
+        assert result == [""]
+
+    def test_comma_at_end(self) -> None:
+        """Test comma stays with preceding text."""
+        sentence = "Hello, world."
+        result = _split_sentence_into_clauses(sentence)
+        assert result == ["Hello,", "world."]
+
+
+class TestErrorConditions:
+    """Tests for error handling and edge cases."""
+
+    def test_split_long_lines_invalid_max_length_message(self) -> None:
+        """Test error message includes the invalid value."""
+        with pytest.raises(ValueError) as exc_info:
+            split_long_lines("text", max_length=-10)
+        assert "-10" in str(exc_info.value)
+
+    def test_whitespace_only_paragraphs(self) -> None:
+        """Test paragraphs that are only whitespace."""
+        text = "   \n\n   \n\n   "
+        assert split_paragraphs(text) == []
+
+    def test_single_character_text(self) -> None:
+        """Test single character text."""
+        assert split_sentences("a") == ["a"]
+        assert split_paragraphs("a") == ["a"]
+
+    def test_only_punctuation(self) -> None:
+        """Test text that is only punctuation."""
+        result = split_sentences("...")
+        # Should handle gracefully (result may vary based on spaCy)
+        assert isinstance(result, list)
+
+    def test_numeric_text(self) -> None:
+        """Test handling of numeric text with periods."""
+        text = "Version 3.14.159 is released. Update now."
+        result = split_sentences(text)
+        assert len(result) == 2
+
+    def test_multiple_spaces(self) -> None:
+        """Test text with multiple consecutive spaces."""
+        text = "Hello    world.   Another    sentence."
+        result = split_sentences(text)
+        assert len(result) == 2
+
+    def test_tabs_and_mixed_whitespace(self) -> None:
+        """Test text with tabs and mixed whitespace."""
+        text = "First paragraph.\n\t\n\nSecond paragraph."
+        result = split_paragraphs(text)
         assert len(result) == 2

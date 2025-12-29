@@ -168,8 +168,8 @@ def paragraphs(
     "-l",
     "--max-length",
     default=80,
-    type=int,
-    help="Maximum line length (default: 80)",
+    type=click.IntRange(min=1),
+    help="Maximum line length (default: 80, must be >= 1)",
 )
 @click.option(
     "-m",
@@ -195,7 +195,7 @@ def longlines(
 
     try:
         result = split_long_lines(text, max_length=max_length, language_model=model)
-    except (ImportError, OSError) as e:
+    except (ImportError, OSError, ValueError) as e:
         error_console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
 

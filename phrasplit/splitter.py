@@ -1,18 +1,42 @@
 """Text splitting utilities using spaCy for NLP-based sentence and clause detection."""
 
+from __future__ import annotations
+
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from spacy.language import Language
 
 try:
-    import spacy  # type: ignore[import-not-found]
+    import spacy
 
     SPACY_AVAILABLE = True
 except ImportError:
     SPACY_AVAILABLE = False
-    spacy = None
+    spacy = None  # type: ignore[assignment]
+
+
+class SpaCyDoc(Protocol):
+    """Protocol for spaCy Doc objects."""
+
+    @property
+    def sents(self) -> list[SpaCySent]:
+        """Return sentence spans."""
+        ...
+
+
+class SpaCySent(Protocol):
+    """Protocol for spaCy Span objects representing sentences."""
+
+    @property
+    def text(self) -> str:
+        """Return the text of the span."""
+        ...
+
 
 # Cache for loaded spaCy model
-_nlp_cache: dict[str, Any] = {}
+_nlp_cache: dict[str, Language] = {}
 
 # Placeholder for ellipsis during spaCy processing
 _ELLIPSIS_PLACEHOLDER = "\u2026"  # Unicode ellipsis character
@@ -23,14 +47,18 @@ def _protect_ellipsis(text: str) -> str:
     Replace ellipsis patterns with a placeholder to prevent sentence splitting.
 
     Handles:
-    - Spaced ellipsis: . . .
-    - Regular ellipsis: ...
-    - Unicode ellipsis: ...
+    - Spaced ellipsis: ". . ." (dot-space-dot-space-dot)
+    - Regular ellipsis: "..." (three or more consecutive dots)
+    - Unicode ellipsis: U+2026 (single ellipsis character)
+
+    All patterns are replaced with a Unicode ellipsis placeholder (U+2026)
+    which is later restored to spaced ellipsis ". . ." format.
     """
     # Replace spaced ellipsis first (. . .)
     text = re.sub(r"\.\s+\.\s+\.", _ELLIPSIS_PLACEHOLDER, text)
     # Replace regular ellipsis (...)
     text = re.sub(r"\.{3,}", _ELLIPSIS_PLACEHOLDER, text)
+    # Unicode ellipsis is already the placeholder, no action needed
     return text
 
 
@@ -39,8 +67,19 @@ def _restore_ellipsis(text: str) -> str:
     return text.replace(_ELLIPSIS_PLACEHOLDER, ". . .")
 
 
-def _get_nlp(language_model: str = "en_core_web_sm") -> Any:
-    """Get or load a spaCy model (cached)."""
+def _get_nlp(language_model: str = "en_core_web_sm") -> Language:
+    """Get or load a spaCy model (cached).
+
+    Args:
+        language_model: Name of the spaCy language model to load
+
+    Returns:
+        Loaded spaCy Language model
+
+    Raises:
+        ImportError: If spaCy is not installed
+        OSError: If the specified language model is not found
+    """
     if not SPACY_AVAILABLE:
         raise ImportError(
             "spaCy is required for this feature. Install with: pip install phrasplit"
@@ -258,7 +297,7 @@ def _hard_split(text: str, max_length: int) -> list[str]:
     return result if result else [text]
 
 
-def _split_at_boundaries(text: str, max_length: int, nlp: Any) -> list[str]:
+def _split_at_boundaries(text: str, max_length: int, nlp: Language) -> list[str]:
     """
     Split text at sentence/clause boundaries to fit within max_length.
 
@@ -321,12 +360,18 @@ def split_long_lines(
 
     Args:
         text: Input text
-        max_length: Maximum line length in characters
+        max_length: Maximum line length in characters (must be positive)
         language_model: spaCy language model to use
 
     Returns:
-        List of lines, each within max_length
+        List of lines, each within max_length (except single words exceeding limit)
+
+    Raises:
+        ValueError: If max_length is less than 1
     """
+    if max_length < 1:
+        raise ValueError(f"max_length must be at least 1, got {max_length}")
+
     nlp = _get_nlp(language_model)
 
     lines = text.split("\n")
