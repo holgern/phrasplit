@@ -4,7 +4,10 @@ import pytest
 
 from phrasplit import split_clauses, split_long_lines, split_paragraphs, split_sentences
 from phrasplit.splitter import (
+    _fix_hyphenated_linebreaks,
     _hard_split,
+    _normalize_whitespace,
+    _preprocess_text,
     _protect_ellipsis,
     _restore_ellipsis,
     _split_at_clauses,
@@ -566,3 +569,110 @@ class TestErrorConditions:
         text = "First paragraph.\n\t\n\nSecond paragraph."
         result = split_paragraphs(text)
         assert len(result) == 2
+
+
+class TestPreprocessing:
+    """Tests for text preprocessing functions."""
+
+    def test_fix_hyphenated_linebreaks_basic(self) -> None:
+        """Test basic hyphenated line break fix."""
+        text = "The recom-\nmendation was ignored."
+        result = _fix_hyphenated_linebreaks(text)
+        assert result == "The recommendation was ignored."
+
+    def test_fix_hyphenated_linebreaks_multiple(self) -> None:
+        """Test multiple hyphenated line breaks."""
+        text = "The recom-\nmendation and imple-\nmentation."
+        result = _fix_hyphenated_linebreaks(text)
+        assert result == "The recommendation and implementation."
+
+    def test_fix_hyphenated_linebreaks_with_spaces(self) -> None:
+        """Test hyphenated line break with trailing spaces."""
+        text = "The recom-  \n  mendation was ignored."
+        result = _fix_hyphenated_linebreaks(text)
+        assert result == "The recommendation was ignored."
+
+    def test_fix_hyphenated_linebreaks_no_hyphen(self) -> None:
+        """Test text without hyphenated line breaks is unchanged."""
+        text = "Normal text without hyphenation."
+        result = _fix_hyphenated_linebreaks(text)
+        assert result == text
+
+    def test_fix_hyphenated_linebreaks_preserves_real_hyphens(self) -> None:
+        """Test that real compound words with hyphens are preserved."""
+        text = "A well-known fact."
+        result = _fix_hyphenated_linebreaks(text)
+        assert result == "A well-known fact."
+
+    def test_normalize_whitespace_multiple_spaces(self) -> None:
+        """Test normalizing multiple spaces to single space."""
+        text = "Hello    world   here."
+        result = _normalize_whitespace(text)
+        assert result == "Hello world here."
+
+    def test_normalize_whitespace_tabs(self) -> None:
+        """Test normalizing tabs to spaces."""
+        text = "Hello\tworld\there."
+        result = _normalize_whitespace(text)
+        assert result == "Hello world here."
+
+    def test_normalize_whitespace_preserves_paragraph_breaks(self) -> None:
+        """Test that paragraph breaks (double newlines) are preserved."""
+        text = "First paragraph.\n\nSecond paragraph."
+        result = _normalize_whitespace(text)
+        assert "\n\n" in result
+
+    def test_normalize_whitespace_normalizes_paragraph_breaks(self) -> None:
+        """Test that multiple newlines are normalized to double newline."""
+        text = "First.\n\n\n\nSecond."
+        result = _normalize_whitespace(text)
+        # Should still have paragraph break
+        assert "First." in result and "Second." in result
+
+    def test_preprocess_text_combined(self) -> None:
+        """Test combined preprocessing steps."""
+        text = "The recom-\nmendation   was   ignored."
+        result = _preprocess_text(text)
+        assert result == "The recommendation was ignored."
+
+    def test_preprocess_text_pdf_like(self) -> None:
+        """Test preprocessing of PDF-like text with multiple issues."""
+        text = "The   recom-\nmendation  and  imple-\nmentation.\n\nNew paragraph."
+        result = _preprocess_text(text)
+        assert "recommendation" in result
+        assert "implementation" in result
+        assert "\n\n" in result  # Paragraph break preserved
+
+
+class TestPreprocessingIntegration:
+    """Integration tests for preprocessing with main split functions."""
+
+    def test_split_sentences_with_hyphenated_linebreaks(self) -> None:
+        """Test that split_sentences handles hyphenated line breaks."""
+        text = "The recom-\nmendation was accepted. It was good."
+        result = split_sentences(text)
+        assert len(result) == 2
+        assert "recommendation" in result[0]
+
+    def test_split_paragraphs_with_hyphenated_linebreaks(self) -> None:
+        """Test that split_paragraphs handles hyphenated line breaks."""
+        text = "First para-\ngraph here.\n\nSecond para-\ngraph here."
+        result = split_paragraphs(text)
+        assert len(result) == 2
+        assert "paragraph" in result[0]
+        assert "paragraph" in result[1]
+
+    def test_split_clauses_with_hyphenated_linebreaks(self) -> None:
+        """Test that split_clauses handles hyphenated line breaks."""
+        text = "The recom-\nmendation was good, and it was imple-\nmented."
+        result = split_clauses(text)
+        assert any("recommendation" in c for c in result)
+        assert any("implemented" in c for c in result)
+
+    def test_split_sentences_with_normalized_whitespace(self) -> None:
+        """Test that split_sentences normalizes whitespace."""
+        text = "Hello    world.   Another    sentence."
+        result = split_sentences(text)
+        assert len(result) == 2
+        # Check whitespace is normalized in output
+        assert "    " not in result[0]

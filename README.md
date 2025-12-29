@@ -1,3 +1,8 @@
+[![PyPI - Version](https://img.shields.io/pypi/v/phrasplit)](https://pypi.org/project/phrasplit/)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/phrasplit)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/phrasplit)
+[![codecov](https://codecov.io/gh/holgern/phrasplit/graph/badge.svg?token=iCHXwbjAXG)](https://codecov.io/gh/holgern/phrasplit)
+
 # phrasplit
 
 A Python library for splitting text into sentences, clauses, or paragraphs using spaCy

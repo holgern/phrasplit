@@ -23,6 +23,64 @@ _nlp_cache: dict[str, Language] = {}
 # Placeholder for ellipsis during spaCy processing
 _ELLIPSIS_PLACEHOLDER = "\u2026"  # Unicode ellipsis character
 
+# Regex for hyphenated line breaks (e.g., "recom-\nmendation" -> "recommendation")
+_HYPHENATED_LINEBREAK = re.compile(r"(\w+)-\s*\n\s*(\w+)")
+
+
+def _fix_hyphenated_linebreaks(text: str) -> str:
+    """
+    Fix hyphenated line breaks commonly found in PDFs and OCR text.
+
+    Joins words that were split across lines with a hyphen.
+    Example: "recom-\\nmendation" -> "recommendation"
+
+    Args:
+        text: Input text
+
+    Returns:
+        Text with hyphenated line breaks fixed
+    """
+    return _HYPHENATED_LINEBREAK.sub(r"\1\2", text)
+
+
+def _normalize_whitespace(text: str) -> str:
+    """
+    Normalize multiple whitespace characters to single spaces.
+
+    Preserves paragraph breaks (double newlines) but normalizes
+    other whitespace sequences.
+
+    Args:
+        text: Input text
+
+    Returns:
+        Text with normalized whitespace
+    """
+    # First preserve paragraph breaks by using a placeholder
+    text = re.sub(r"\n\s*\n", "\n\n", text)
+    # Normalize other whitespace (but not newlines in paragraph breaks)
+    text = re.sub(r"[^\S\n]+", " ", text)
+    return text
+
+
+def _preprocess_text(text: str) -> str:
+    """
+    Apply preprocessing steps to clean up text before NLP processing.
+
+    Steps:
+    1. Fix hyphenated line breaks (common in PDFs)
+    2. Normalize whitespace
+
+    Args:
+        text: Input text
+
+    Returns:
+        Preprocessed text
+    """
+    text = _fix_hyphenated_linebreaks(text)
+    text = _normalize_whitespace(text)
+    return text
+
 
 def _protect_ellipsis(text: str) -> str:
     """
@@ -85,12 +143,15 @@ def split_paragraphs(text: str) -> list[str]:
     """
     Split text into paragraphs (separated by double newlines).
 
+    Applies preprocessing to fix hyphenated line breaks and normalize whitespace.
+
     Args:
         text: Input text
 
     Returns:
         List of paragraphs (non-empty, stripped)
     """
+    text = _preprocess_text(text)
     paragraphs = re.split(r"\n\s*\n", text)
     return [p.strip() for p in paragraphs if p.strip()]
 
