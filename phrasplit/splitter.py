@@ -22,8 +22,13 @@ except ImportError:
 # Cache for loaded spaCy model
 _nlp_cache: dict[str, Language] = {}
 
-# Placeholder for ellipsis during spaCy processing
-_ELLIPSIS_PLACEHOLDER = "\u2026"  # Unicode ellipsis character
+# Placeholders for ellipsis during spaCy processing
+# We use Unicode private use area characters to avoid collision with real text
+_ELLIPSIS_3_PLACEHOLDER = "\ue000"  # 3 dots: ...
+_ELLIPSIS_4_PLACEHOLDER = "\ue001"  # 4 dots: ....
+_ELLIPSIS_SPACED_PLACEHOLDER = "\ue002"  # Spaced: . . .
+_ELLIPSIS_UNICODE_PLACEHOLDER = "\ue003"  # Unicode ellipsis: …
+_ELLIPSIS_LONG_PREFIX = "\ue004"  # Prefix for 5+ dots (followed by count digit)
 
 # Regex for hyphenated line breaks (e.g., "recom-\nmendation" -> "recommendation")
 _HYPHENATED_LINEBREAK = re.compile(r"(\w+)-\s*\n\s*(\w+)")
@@ -93,27 +98,73 @@ def _preprocess_text(text: str) -> str:
 
 def _protect_ellipsis(text: str) -> str:
     """
-    Replace ellipsis patterns with a placeholder to prevent sentence splitting.
+    Replace ellipsis patterns with placeholders to prevent sentence splitting.
 
     Handles:
     - Spaced ellipsis: ". . ." (dot-space-dot-space-dot)
-    - Regular ellipsis: "..." (three or more consecutive dots)
+    - Regular ellipsis: "..." (three consecutive dots)
+    - Four dots: "...." (often used for ellipsis + period)
+    - Five or more dots: "....." etc.
     - Unicode ellipsis: U+2026 (single ellipsis character)
 
-    All patterns are replaced with a Unicode ellipsis placeholder (U+2026)
-    which is later restored to spaced ellipsis ". . ." format.
+    Each pattern is replaced with a unique placeholder that preserves information
+    about the original format, allowing exact restoration later.
     """
-    # Replace spaced ellipsis first (. . .)
-    text = re.sub(r"\.\s+\.\s+\.", _ELLIPSIS_PLACEHOLDER, text)
-    # Replace regular ellipsis (...)
-    text = re.sub(r"\.{3,}", _ELLIPSIS_PLACEHOLDER, text)
-    # Unicode ellipsis is already the placeholder, no action needed
+
+    # Replace spaced ellipsis first (. . .) - must come before regular dots
+    text = text.replace(". . .", _ELLIPSIS_SPACED_PLACEHOLDER)
+
+    # Replace unicode ellipsis
+    text = text.replace("\u2026", _ELLIPSIS_UNICODE_PLACEHOLDER)
+
+    # Replace longer dot sequences first (5+ dots), encoding the count
+    # Use offset of 0xE010 (private use area) to avoid control characters
+    # chr(0) - chr(31) are control chars, chr(9) is tab, chr(10) is newline
+    def replace_long_dots(match: re.Match[str]) -> str:
+        count = len(match.group(0))
+        # Encode count in private use area: U+E010 + count
+        # This avoids control characters and whitespace
+        return _ELLIPSIS_LONG_PREFIX + chr(0xE010 + count)
+
+    text = re.sub(r"\.{5,}", replace_long_dots, text)
+
+    # Replace 4 dots
+    text = text.replace("....", _ELLIPSIS_4_PLACEHOLDER)
+
+    # Replace 3 dots (must come after 4+ to avoid partial matches)
+    text = text.replace("...", _ELLIPSIS_3_PLACEHOLDER)
+
     return text
 
 
 def _restore_ellipsis(text: str) -> str:
-    """Restore ellipsis placeholder back to spaced ellipsis."""
-    return text.replace(_ELLIPSIS_PLACEHOLDER, ". . .")
+    """Restore ellipsis placeholders back to their original format."""
+    # Restore in reverse order of protection
+
+    # Restore 3 dots
+    text = text.replace(_ELLIPSIS_3_PLACEHOLDER, "...")
+
+    # Restore 4 dots
+    text = text.replace(_ELLIPSIS_4_PLACEHOLDER, "....")
+
+    # Restore long dot sequences (5+)
+    def restore_long_dots(match: re.Match[str]) -> str:
+        # Decode count from private use area offset
+        count = ord(match.group(1)) - 0xE010
+        return "." * count
+
+    # Use re.DOTALL so (.) matches any character including newline (chr(10))
+    text = re.sub(
+        _ELLIPSIS_LONG_PREFIX + r"(.)", restore_long_dots, text, flags=re.DOTALL
+    )
+
+    # Restore unicode ellipsis
+    text = text.replace(_ELLIPSIS_UNICODE_PLACEHOLDER, "\u2026")
+
+    # Restore spaced ellipsis
+    text = text.replace(_ELLIPSIS_SPACED_PLACEHOLDER, ". . .")
+
+    return text
 
 
 def _split_urls(sentences: list[str]) -> list[str]:

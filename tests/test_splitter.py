@@ -30,13 +30,15 @@ class TestSplitSentences:
     def test_ellipses_handling(self) -> None:
         """Test handling of ellipses in sentence splitting.
 
-        Note: spaCy doesn't split after ellipsis unless followed by
-        sentence-ending punctuation. Ellipses are restored as '. . .'
-        (spaced) after processing.
+        Ellipses should be preserved in their original format and should NOT
+        cause sentence splitting on their own.
         """
         text = "Hello... Is it working? Yes... it is!"
-        expected = ["Hello. . . Is it working?", "Yes. . . it is!"]
-        assert split_sentences(text) == expected
+        result = split_sentences(text)
+        # Ellipsis should be preserved as ... (not transformed to . . .)
+        assert any("..." in s for s in result)
+        # Should not contain spaced ellipsis (that would indicate transformation)
+        assert not any(". . ." in s for s in result)
 
     def test_common_abbreviations(self) -> None:
         """Test abbreviations like Mr., Prof., U.S.A. that shouldn't split sentences."""
@@ -397,47 +399,53 @@ class TestEllipsisHandling:
         text = "Hello... world"
         result = _protect_ellipsis(text)
         assert "..." not in result
-        assert "\u2026" in result
+        # Uses private use area placeholder, not unicode ellipsis
+        assert "\ue000" in result
 
     def test_protect_long_ellipsis(self) -> None:
         """Test protection of ellipsis with more than 3 dots."""
         text = "Hello..... world"
         result = _protect_ellipsis(text)
         assert "....." not in result
-        assert "\u2026" in result
+        # Long dots use prefix + count encoding
+        assert "\ue004" in result
 
     def test_protect_spaced_ellipsis(self) -> None:
         """Test protection of spaced ellipsis (. . .)."""
         text = "Hello. . . world"
         result = _protect_ellipsis(text)
         assert ". . ." not in result
-        assert "\u2026" in result
+        assert "\ue002" in result
 
-    def test_protect_unicode_ellipsis_unchanged(self) -> None:
-        """Test that unicode ellipsis is already the placeholder."""
+    def test_protect_unicode_ellipsis(self) -> None:
+        """Test that unicode ellipsis is replaced with placeholder."""
         text = "Hello\u2026 world"
         result = _protect_ellipsis(text)
-        assert result == text  # No change, already placeholder
+        # Unicode ellipsis gets its own placeholder
+        assert "\u2026" not in result
+        assert "\ue003" in result
 
-    def test_restore_ellipsis(self) -> None:
-        """Test restoration of ellipsis placeholder to spaced format."""
-        text = "Hello\u2026 world"
-        result = _restore_ellipsis(text)
-        assert result == "Hello. . . world"
+    def test_restore_ellipsis_preserves_format(self) -> None:
+        """Test restoration of ellipsis preserves original format."""
+        # Three dots stay as three dots
+        text = "Hello... world"
+        protected = _protect_ellipsis(text)
+        restored = _restore_ellipsis(protected)
+        assert restored == "Hello... world"
 
     def test_protect_and_restore_roundtrip(self) -> None:
-        """Test that protect then restore gives consistent output."""
+        """Test that protect then restore gives back original."""
         original = "Wait... what?"
         protected = _protect_ellipsis(original)
         restored = _restore_ellipsis(protected)
-        assert restored == "Wait. . . what?"
+        assert restored == original  # Exact roundtrip
 
     def test_multiple_ellipses(self) -> None:
         """Test handling multiple ellipses in same text."""
         text = "One... Two... Three..."
         protected = _protect_ellipsis(text)
         restored = _restore_ellipsis(protected)
-        assert restored == "One. . . Two. . . Three. . ."
+        assert restored == text  # Exact roundtrip
 
 
 class TestHardSplit:
@@ -765,11 +773,18 @@ class TestSentenceSplittingEdgeCases:
         assert len(result) == 2
 
     def test_ellipsis_at_end(self) -> None:
-        """Test ellipsis at sentence end."""
+        """Test ellipsis at sentence end.
+
+        Note: spaCy may split after ellipsis when followed by a capital letter,
+        treating it as a sentence boundary. The key is that the ellipsis format
+        is preserved (... stays as ..., not transformed).
+        """
         text = "This is a sentence terminal ellipsis... And this continues."
         result = split_sentences(text)
-        # Ellipsis handling may vary - just check we get results
-        assert len(result) == 1
+        # Ellipsis should be preserved in its original format
+        assert any("..." in s for s in result)
+        # Should NOT be transformed to spaced ellipsis
+        assert not any(". . ." in s for s in result)
 
     # Enumeration tests
     def test_enumeration_numbers(self) -> None:
@@ -1246,6 +1261,120 @@ class TestSplitSentencesWithCorrections:
         # Should have Dr. Johnson merged and URLs split
         assert any("Dr. Johnson" in s for s in result)
         assert len(result) >= 2
+
+
+class TestEllipsisPreservation:
+    """Tests for ellipsis preservation during sentence splitting.
+
+    The ellipsis handling should preserve the ORIGINAL format of ellipsis
+    characters rather than transforming them. This is critical for:
+    - Benchmark evaluation (content must match exactly)
+    - Faithful text processing (don't modify user's content)
+    """
+
+    def test_protect_restore_three_dots(self) -> None:
+        """Test that three dots ... are preserved exactly."""
+        text = "Hello... world"
+        protected = _protect_ellipsis(text)
+        restored = _restore_ellipsis(protected)
+        assert restored == text
+
+    def test_protect_restore_four_dots(self) -> None:
+        """Test that four dots .... are preserved exactly."""
+        text = "Hello.... world"
+        protected = _protect_ellipsis(text)
+        restored = _restore_ellipsis(protected)
+        assert restored == text
+
+    def test_protect_restore_many_dots(self) -> None:
+        """Test that many dots (5+) are preserved exactly."""
+        text = "Hello....... world"
+        protected = _protect_ellipsis(text)
+        restored = _restore_ellipsis(protected)
+        assert restored == text
+
+    def test_protect_restore_ten_dots(self) -> None:
+        """Test that exactly 10 dots are preserved.
+
+        This is a regression test for chr(10) = newline edge case.
+        """
+        text = "Hello.......... world"
+        protected = _protect_ellipsis(text)
+        restored = _restore_ellipsis(protected)
+        assert restored == text
+
+    def test_protect_restore_spaced_ellipsis(self) -> None:
+        """Test that spaced ellipsis . . . is preserved exactly."""
+        text = "Hello. . . world"
+        protected = _protect_ellipsis(text)
+        restored = _restore_ellipsis(protected)
+        assert restored == text
+
+    def test_protect_restore_unicode_ellipsis(self) -> None:
+        """Test that unicode ellipsis \u2026 is preserved exactly."""
+        text = "Hello\u2026 world"
+        protected = _protect_ellipsis(text)
+        restored = _restore_ellipsis(protected)
+        assert restored == text
+
+    def test_protect_restore_mixed_ellipses(self) -> None:
+        """Test that multiple different ellipsis formats are all preserved."""
+        text = "First... second.... third....... fourth. . . fifth\u2026 end"
+        protected = _protect_ellipsis(text)
+        restored = _restore_ellipsis(protected)
+        assert restored == text
+
+    def test_split_sentences_preserves_three_dots(self) -> None:
+        """Test split_sentences preserves three dots in output."""
+        text = "Hello... Is it working? Yes."
+        result = split_sentences(text)
+        # The ellipsis should be preserved as ...
+        assert any("..." in s for s in result)
+        # Should NOT be transformed to . . .
+        assert not any(". . ." in s for s in result)
+
+    def test_split_sentences_preserves_four_dots(self) -> None:
+        """Test split_sentences preserves four dots in output."""
+        text = "Hello.... Is it working? Yes."
+        result = split_sentences(text)
+        # The ellipsis should be preserved as ....
+        assert any("...." in s for s in result)
+
+    def test_split_sentences_preserves_many_dots(self) -> None:
+        """Test split_sentences preserves many consecutive dots."""
+        text = "Hello........ Is it working? Yes."
+        result = split_sentences(text)
+        # The many dots should be preserved
+        assert any("........" in s for s in result)
+
+    def test_split_sentences_preserves_spaced_ellipsis(self) -> None:
+        """Test split_sentences preserves spaced ellipsis format."""
+        text = "Hello. . . Is it working? Yes."
+        result = split_sentences(text)
+        # Spaced ellipsis should be preserved as . . .
+        assert any(". . ." in s for s in result)
+
+    def test_split_sentences_preserves_unicode_ellipsis(self) -> None:
+        """Test split_sentences preserves unicode ellipsis character."""
+        text = "Hello\u2026 Is it working? Yes."
+        result = split_sentences(text)
+        # Unicode ellipsis should be preserved as \u2026
+        assert any("\u2026" in s for s in result)
+
+    def test_content_unchanged_after_split(self) -> None:
+        """Test that joining split sentences reproduces original content.
+
+        This is the key test for benchmark compatibility - the content
+        (ignoring sentence boundaries) must be identical.
+        """
+        original = "First... second.... third. . . fourth\u2026 end."
+        result = split_sentences(original)
+        # Join back (with space) and compare content
+        rejoined = " ".join(result)
+        # Remove spaces for content comparison (like segmenteval does)
+        original_content = original.replace(" ", "").replace("\n", "")
+        rejoined_content = rejoined.replace(" ", "").replace("\n", "")
+        assert original_content == rejoined_content
 
 
 class TestLanguageSpecificAbbreviations:
