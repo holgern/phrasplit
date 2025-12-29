@@ -2,7 +2,6 @@
 
 import sys
 from pathlib import Path
-from typing import Optional
 
 import click
 from rich.console import Console
@@ -13,7 +12,7 @@ console = Console()
 error_console = Console(stderr=True)
 
 
-def read_input(input_file: Optional[str]) -> str:
+def read_input(input_file: str | None) -> str:
     """Read input from file or stdin.
 
     Args:
@@ -27,7 +26,7 @@ def read_input(input_file: Optional[str]) -> str:
     return Path(input_file).read_text(encoding="utf-8")
 
 
-def write_output(text: str, output: Optional[Path], use_rich: bool = True) -> None:
+def write_output(text: str, output: Path | None, use_rich: bool = True) -> None:
     """Write output to file or stdout.
 
     Args:
@@ -66,8 +65,8 @@ def main() -> None:
     help="spaCy language model (default: en_core_web_sm)",
 )
 def sentences(
-    input_file: Optional[str],
-    output: Optional[Path],
+    input_file: str | None,
+    output: Path | None,
     model: str,
 ) -> None:
     """Split text into sentences.
@@ -105,8 +104,8 @@ def sentences(
     help="spaCy language model (default: en_core_web_sm)",
 )
 def clauses(
-    input_file: Optional[str],
-    output: Optional[Path],
+    input_file: str | None,
+    output: Path | None,
     model: str,
 ) -> None:
     """Split text into clauses (at commas).
@@ -138,8 +137,8 @@ def clauses(
     help="Output file (default: stdout)",
 )
 def paragraphs(
-    input_file: Optional[str],
-    output: Optional[Path],
+    input_file: str | None,
+    output: Path | None,
 ) -> None:
     """Split text into paragraphs.
 
@@ -178,8 +177,8 @@ def paragraphs(
     help="spaCy language model (default: en_core_web_sm)",
 )
 def longlines(
-    input_file: Optional[str],
-    output: Optional[Path],
+    input_file: str | None,
+    output: Path | None,
     max_length: int,
     model: str,
 ) -> None:

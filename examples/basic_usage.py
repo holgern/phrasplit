@@ -138,11 +138,14 @@ def demonstrate_long_line_splitting() -> None:
         print(f"   Line {i} ({len(line)} chars): {line!r}")
 
     # Clause-based splitting
-    text = "This is a very long sentence with many clauses, and it continues here, and goes on."
+    text = (
+        "This is a very long sentence with many clauses, "
+        "and it continues here, and goes on."
+    )
     print("\n2. Split at clause boundaries when sentence is too long (max_length=35):")
     print(f"   Input: {text!r}")
     result = split_long_lines(text, max_length=35)
-    print(f"   Output:")
+    print("   Output:")
     for i, line in enumerate(result, 1):
         print(f"   Line {i} ({len(line)} chars): {line!r}")
 
@@ -185,7 +188,7 @@ def demonstrate_edge_cases() -> None:
 
     # Unicode text
     text = "Bonjour le monde. Comment allez-vous?"
-    print(f"\n4. Unicode text:")
+    print("\n4. Unicode text:")
     print(f"   Input: {text!r}")
     print(f"   Output: {split_sentences(text)}")
 

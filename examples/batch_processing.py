@@ -301,7 +301,7 @@ From smartphones to smart homes, we are surrounded by innovation.
 Artificial intelligence is becoming more prevalent.
 Machine learning algorithms power many of the services we use daily.
 The future promises even more exciting developments.""",
-        "sample3.txt": """Writing good code is an art. It requires practice and patience.
+        "sample3.txt": """Writing good code is an art. It requires practice.
 Clean code is easy to read and maintain. Comments help explain complex logic.
 
 Testing is crucial for software quality.

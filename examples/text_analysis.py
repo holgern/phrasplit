@@ -254,7 +254,7 @@ def generate_readability_report(text: str) -> str:
         f"  Simple sentences (1 clause): {complexity.get('simple_sentences', 0)}",
         f"  Moderate sentences (2 clauses): {complexity.get('moderate_sentences', 0)}",
         f"  Complex sentences (3+ clauses): {complexity.get('complex_sentences', 0)}",
-        f"  Avg clauses per sentence: {complexity.get('avg_clauses_per_sentence', 0):.1f}",
+        f"  Avg clauses/sentence: {complexity.get('avg_clauses_per_sentence', 0):.1f}",
         "",
         "RECOMMENDATIONS",
         "-" * 40,
@@ -343,9 +343,8 @@ Most importantly, don't be afraid to revise. Great writing is rewriting.
     para_analysis = analyze_paragraph_structure(sample_text)
     for para in para_analysis:
         print(f"  Paragraph {para['paragraph']}:")
-        print(
-            f"    Sentences: {para['sentences']}, Clauses: {para['clauses']}, Words: {para['words']}"
-        )
+        sent, cl, wd = para["sentences"], para["clauses"], para["words"]
+        print(f"    Sentences: {sent}, Clauses: {cl}, Words: {wd}")
         print(f"    Preview: {para['preview']!r}")
         print()
 
@@ -366,16 +365,13 @@ Most importantly, don't be afraid to revise. Great writing is rewriting.
     print("-" * 40)
     complexity = analyze_clause_complexity(sample_text)
     total = complexity["total_sentences"]
+    simple = complexity["simple_sentences"]
+    moderate = complexity["moderate_sentences"]
+    complex_cnt = complexity["complex_sentences"]
     print(f"  Total sentences: {total}")
-    print(
-        f"  Simple (1 clause): {complexity['simple_sentences']} ({complexity['simple_sentences'] / total * 100:.1f}%)"
-    )
-    print(
-        f"  Moderate (2 clauses): {complexity['moderate_sentences']} ({complexity['moderate_sentences'] / total * 100:.1f}%)"
-    )
-    print(
-        f"  Complex (3+ clauses): {complexity['complex_sentences']} ({complexity['complex_sentences'] / total * 100:.1f}%)"
-    )
+    print(f"  Simple (1 clause): {simple} ({simple / total * 100:.1f}%)")
+    print(f"  Moderate (2 clauses): {moderate} ({moderate / total * 100:.1f}%)")
+    print(f"  Complex (3+ clauses): {complex_cnt} ({complex_cnt / total * 100:.1f}%)")
     print(f"  Max clauses in a sentence: {complexity['max_clauses']}")
 
     # Full readability report

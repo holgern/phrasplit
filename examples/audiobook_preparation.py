@@ -5,8 +5,8 @@ This script demonstrates how to prepare text for text-to-speech (TTS)
 processing by splitting text into natural chunks with appropriate pause points.
 """
 
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator
 
 from phrasplit import split_clauses, split_paragraphs, split_sentences
 
@@ -22,7 +22,8 @@ class AudioChunk:
     pause_after: str  # "short", "medium", "long"
 
     def __str__(self) -> str:
-        return f"[P{self.paragraph_index}:S{self.sentence_index}:C{self.clause_index}] {self.text}"
+        p, s, c = self.paragraph_index, self.sentence_index, self.clause_index
+        return f"[P{p}:S{s}:C{c}] {self.text}"
 
 
 def prepare_for_tts(text: str) -> Iterator[AudioChunk]:

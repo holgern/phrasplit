@@ -7,7 +7,7 @@ using phrasplit's line splitting capabilities.
 
 from dataclasses import dataclass
 
-from phrasplit import split_long_lines, split_paragraphs, split_sentences
+from phrasplit import split_long_lines, split_sentences
 
 
 @dataclass

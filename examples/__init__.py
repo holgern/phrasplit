@@ -2,11 +2,11 @@
 
 This package contains example scripts showing various use cases for phrasplit:
 
-- basic_usage.py: Core functionality demonstrations (sentences, clauses, paragraphs, long lines)
+- basic_usage.py: Core functionality (sentences, clauses, paragraphs, long lines)
 - audiobook_preparation.py: Text-to-speech preparation with SSML and timing scripts
 - subtitle_generation.py: SRT/WebVTT subtitle generation from transcripts
 - text_analysis.py: Text statistics, readability analysis, and structure analysis
-- batch_processing.py: Processing multiple files with progress tracking and parallelization
+- batch_processing.py: Processing multiple files with progress tracking
 
 To run an example:
     python -m examples.basic_usage
