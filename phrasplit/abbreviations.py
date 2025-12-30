@@ -926,6 +926,31 @@ MODEL_TO_ABBREVIATIONS: dict[str, set[str]] = {
 }
 
 # =============================================================================
+# Sentence-ending abbreviations
+# =============================================================================
+
+# Abbreviations that commonly appear at the END of sentences
+# These should NOT trigger a merge with the following sentence
+# even though they are abbreviations
+# Note: Jr/Sr are excluded because in some languages (Spanish, Portuguese)
+# they're titles that precede names, not suffixes that follow names
+SENTENCE_ENDING_ABBREVIATIONS: set[str] = {
+    # English company suffixes
+    "etc",  # "...and so on, etc. The next topic..."
+    "Inc",  # "...by Apple, Inc. The company..."
+    "Corp",  # "...by Microsoft Corp. They announced..."
+    "Ltd",  # "...by Acme Ltd. The firm..."
+    "Co",  # "...by Acme Co. They manufacture..."
+    # Units that often end sentences
+    "in",  # "...measured 5 in. The result..."
+    "ft",  # "...about 10 ft. The building..."
+    "oz",  # "...weighs 8 oz. The package..."
+    "lb",  # "...weighs 50 lb. The shipment..."
+    "yr",  # "...lasted 5 yr. The study..."
+    "mo",  # "...took 6 mo. The project..."
+}
+
+# =============================================================================
 # Sentence starters (multi-language)
 # =============================================================================
 
@@ -1189,3 +1214,16 @@ def get_sentence_starters() -> set[str]:
         Set of words that typically start sentences
     """
     return SENTENCE_STARTERS
+
+
+def get_sentence_ending_abbreviations() -> set[str]:
+    """Get the set of abbreviations that commonly end sentences.
+
+    These are abbreviations like "etc.", "Inc.", "Ltd." that frequently
+    appear at the end of sentences and should NOT trigger a merge with
+    the following sentence.
+
+    Returns:
+        Set of abbreviations that can end sentences
+    """
+    return SENTENCE_ENDING_ABBREVIATIONS

@@ -5,7 +5,11 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, NamedTuple
 
-from phrasplit.abbreviations import get_abbreviations, get_sentence_starters
+from phrasplit.abbreviations import (
+    get_abbreviations,
+    get_sentence_ending_abbreviations,
+    get_sentence_starters,
+)
 
 
 class Segment(NamedTuple):
@@ -264,8 +268,9 @@ def _merge_abbreviation_splits(
 
     Conservative approach: only merge if:
     1. Previous sentence ends with a known abbreviation + period
-    2. Next sentence starts with a capital letter (likely a name/continuation)
-    3. Next sentence does NOT start with a common sentence starter
+    2. The abbreviation is NOT one that commonly ends sentences (etc., Inc., etc.)
+    3. Next sentence starts with a capital letter (likely a name/continuation)
+    4. Next sentence does NOT start with a common sentence starter
 
     Args:
         sentences: List of sentences from spaCy
@@ -284,8 +289,9 @@ def _merge_abbreviation_splits(
     if len(sentences) <= 1:
         return sentences
 
-    # Get common sentence starters
+    # Get common sentence starters and sentence-ending abbreviations
     sentence_starters = get_sentence_starters()
+    sentence_ending_abbrevs = get_sentence_ending_abbreviations()
 
     result: list[str] = []
     i = 0
@@ -302,7 +308,8 @@ def _merge_abbreviation_splits(
             if match:
                 abbrev = match.group(1)
                 # Check if it's a known abbreviation for this language
-                if abbrev in abbreviations:
+                # BUT skip if it's an abbreviation that commonly ends sentences
+                if abbrev in abbreviations and abbrev not in sentence_ending_abbrevs:
                     # Check if next sentence starts with a word that's likely a name
                     # (capital letter, not a common sentence starter)
                     next_words = next_sent.split()
@@ -328,13 +335,11 @@ def _merge_abbreviation_splits(
 
 
 # Pattern to detect ellipsis followed by a new sentence
-# Matches: 3+ dots OR spaced ellipsis, followed by whitespace and capital letter
+# Matches: 3+ dots OR spaced ellipsis, followed by whitespace,
+# optional quotes, and capital letter
 _ELLIPSIS_SENTENCE_BREAK = re.compile(
-    r"(\.{3,}|\. \. \.)\s+([A-Z])",
+    r'(\.{3,}|\. \. \.)\s+(["\'\u201c\u201d\u2018\u2019]*[A-Z])',
 )
-
-# Pattern to detect sentence starting with ellipsis (should merge with previous)
-_ELLIPSIS_START = re.compile(r"^(\. \. \.|\.{3,})\s*")
 
 
 def _split_after_ellipsis(sentences: list[str]) -> list[str]:
@@ -344,11 +349,7 @@ def _split_after_ellipsis(sentences: list[str]) -> list[str]:
     When text like "He was tired.... The next day" is processed, spaCy may not
     recognize the sentence boundary after the ellipsis. This function splits
     such cases by detecting ellipsis (3+ dots or ". . .") followed by whitespace
-    and a capital letter.
-
-    Also handles the reverse case: when spaCy incorrectly puts ellipsis at the
-    start of a sentence (e.g., after a quote), this function merges the ellipsis
-    back to the previous sentence.
+    and a capital letter (optionally preceded by quotes).
 
     Args:
         sentences: List of sentences from spaCy
@@ -359,25 +360,9 @@ def _split_after_ellipsis(sentences: list[str]) -> list[str]:
     if not sentences:
         return sentences
 
-    # First pass: merge ellipsis that appears at start of sentence to previous
-    merged: list[str] = []
-    for sent in sentences:
-        match = _ELLIPSIS_START.match(sent)
-        if match and merged:
-            # Ellipsis at start - merge with previous sentence
-            ellipsis = match.group(1)
-            rest = sent[match.end() :].strip()
-            # Add ellipsis to previous sentence
-            merged[-1] = merged[-1] + " " + ellipsis
-            # If there's content after ellipsis, it becomes a new sentence
-            if rest:
-                merged.append(rest)
-        else:
-            merged.append(sent)
-
-    # Second pass: split sentences containing ellipsis followed by capital letter
+    # Split sentences containing ellipsis followed by capital letter
     result: list[str] = []
-    for sent in merged:
+    for sent in sentences:
         # Check if sentence contains ellipsis followed by capital letter
         match = _ELLIPSIS_SENTENCE_BREAK.search(sent)
         if not match:
