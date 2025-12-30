@@ -183,74 +183,6 @@ def _restore_ellipsis(text: str) -> str:
     return text
 
 
-def _split_on_colons(sentences: list[str]) -> list[str]:
-    """
-    Split sentences at colons.
-
-    This splits each sentence at colon boundaries, treating the colon
-    as a sentence terminator. The colon stays with the text before it.
-
-    Preserves URLs by not splitting on http: or https:.
-
-    Args:
-        sentences: List of sentences
-
-    Returns:
-        List of sentences split at colons
-    """
-    result: list[str] = []
-
-    for sent in sentences:
-        # Skip if no colon
-        if ":" not in sent:
-            result.append(sent)
-            continue
-
-        # Protect URLs by replacing them with placeholders
-        url_placeholders: list[str] = []
-        protected = sent
-
-        # Find and replace URLs with placeholders
-        for match in _URL_PATTERN.finditer(sent):
-            url = match.group(0)
-            placeholder = f"\ue0f0{len(url_placeholders)}\ue0f1"
-            url_placeholders.append(url)
-            protected = protected.replace(url, placeholder, 1)
-
-        # Also protect common URL schemes that might not be full URLs yet
-        protected = protected.replace("https:", "\ue0f2HTTPS\ue0f3")
-        protected = protected.replace("http:", "\ue0f2HTTP\ue0f3")
-
-        # Now split on remaining colons
-        if ":" not in protected:
-            # No colons left after URL protection
-            result.append(sent)
-            continue
-
-        parts = protected.split(":")
-        for i, part in enumerate(parts):
-            part = part.strip()
-            if not part:
-                continue
-
-            # Add colon back to all parts except the last
-            if i < len(parts) - 1:
-                part = part + ":"
-
-            # Restore URL scheme placeholders
-            part = part.replace("\ue0f2HTTPS\ue0f3", "https:")
-            part = part.replace("\ue0f2HTTP\ue0f3", "http:")
-
-            # Restore URL placeholders
-            for j, url in enumerate(url_placeholders):
-                placeholder = f"\ue0f0{j}\ue0f1"
-                part = part.replace(placeholder, url)
-
-            result.append(part)
-
-    return result
-
-
 def _split_urls(sentences: list[str]) -> list[str]:
     """
     Split sentences that contain multiple URLs.
@@ -393,19 +325,24 @@ def _apply_corrections(
     sentences: list[str],
     language_model: str = "en_core_web_sm",
     split_on_colon: bool = True,
+    nlp: Language | None = None,
 ) -> list[str]:
     """
     Apply post-processing corrections to fix common spaCy segmentation errors.
 
     Corrections applied (in order):
     1. Merge sentences incorrectly split after abbreviations (reduces count)
-    2. Split sentences at colons (if enabled)
-    3. Split sentences containing multiple URLs (increases count)
+    2. Split sentences containing multiple URLs (increases count)
+
+    Note: Colon handling is minimal - we let spaCy handle colons naturally.
+    The split_on_colon parameter is kept for API compatibility but currently
+    has no effect (spaCy's default colon behavior is used).
 
     Args:
         sentences: List of sentences from spaCy
         language_model: spaCy language model name (for language-specific corrections)
-        split_on_colon: Whether to split sentences at colons
+        split_on_colon: Kept for API compatibility (currently unused)
+        nlp: Optional spaCy language model (currently unused)
 
     Returns:
         Corrected list of sentences
@@ -413,11 +350,7 @@ def _apply_corrections(
     # First merge abbreviation splits (need to combine before other splits)
     sentences = _merge_abbreviation_splits(sentences, language_model)
 
-    # Split on colons if enabled
-    if split_on_colon:
-        sentences = _split_on_colons(sentences)
-
-    # Then split URLs (increases sentence count)
+    # Split URLs (increases sentence count)
     sentences = _split_urls(sentences)
 
     return sentences
@@ -487,8 +420,8 @@ def split_sentences(
         apply_corrections: Whether to apply post-processing corrections for
             common spaCy errors (URL splitting, abbreviation handling).
             Default is True.
-        split_on_colon: Whether to split sentences at colons. This treats
-            colons as sentence terminators. Default is True.
+        split_on_colon: Kept for API compatibility (currently unused).
+            spaCy's default colon behavior is used. Default is True.
 
     Returns:
         List of sentences
@@ -515,7 +448,7 @@ def split_sentences(
 
     # Apply post-processing corrections if enabled
     if apply_corrections:
-        result = _apply_corrections(result, language_model, split_on_colon)
+        result = _apply_corrections(result, language_model, split_on_colon, nlp)
 
     return result
 
@@ -786,8 +719,8 @@ def split_text(
         apply_corrections: Whether to apply post-processing corrections for
             common spaCy errors (URL splitting, abbreviation handling).
             Default is True. Only applies to sentence/clause modes.
-        split_on_colon: Whether to split sentences at colons. Default is True.
-            Only applies to sentence/clause modes.
+        split_on_colon: Kept for API compatibility (currently unused).
+            spaCy's default colon behavior is used. Default is True.
 
     Returns:
         List of Segment namedtuples, each containing:
@@ -845,7 +778,9 @@ def split_text(
 
         # Apply post-processing corrections if enabled
         if apply_corrections:
-            sentences = _apply_corrections(sentences, language_model, split_on_colon)
+            sentences = _apply_corrections(
+                sentences, language_model, split_on_colon, nlp
+            )
 
         if mode == "sentence":
             for sent_idx, sent in enumerate(sentences):

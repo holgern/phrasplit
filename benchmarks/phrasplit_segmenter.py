@@ -186,6 +186,12 @@ def main() -> None:
         default=None,
         help="Override spaCy model (e.g., en_core_web_lg)",
     )
+    parser.add_argument(
+        "--no-split-on-colon",
+        action="store_true",
+        default=False,
+        help="Disable splitting on colons",
+    )
 
     args = parser.parse_args()
 
@@ -207,7 +213,12 @@ def main() -> None:
 
                 for chunk in chunks:
                     # Use the actual phrasplit.split_sentences() function
-                    sentences = split_sentences(chunk, language_model=model_name)
+                    split_on_colon = not args.no_split_on_colon
+                    sentences = split_sentences(
+                        chunk,
+                        language_model=model_name,
+                        split_on_colon=split_on_colon,
+                    )
 
                     # Write each sentence on its own line
                     for sentence in sentences:

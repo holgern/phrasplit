@@ -20,7 +20,6 @@ from phrasplit.splitter import (
     _protect_ellipsis,
     _restore_ellipsis,
     _split_at_clauses,
-    _split_on_colons,
     _split_sentence_into_clauses,
     _split_urls,
 )
@@ -1021,129 +1020,32 @@ class TestSentenceSplittingEdgeCases:
         assert len(result) == 2
 
 
-class TestSplitOnColons:
-    """Tests for _split_on_colons post-processing function."""
-
-    def test_no_colons(self) -> None:
-        """Test sentences without colons are unchanged."""
-        sentences = ["This is a normal sentence.", "Another sentence here."]
-        result = _split_on_colons(sentences)
-        assert result == sentences
-
-    def test_single_colon_splits(self) -> None:
-        """Test sentence with colon is split."""
-        sentences = ["Note: This is important."]
-        result = _split_on_colons(sentences)
-        assert len(result) == 2
-        assert result[0] == "Note:"
-        assert result[1] == "This is important."
-
-    def test_news_source_pattern(self) -> None:
-        """Test news source pattern like 'Al-Zaman : content'."""
-        sentences = ["Al-Zaman : American forces killed someone."]
-        result = _split_on_colons(sentences)
-        assert len(result) == 2
-        assert result[0] == "Al-Zaman:"
-        assert result[1] == "American forces killed someone."
-
-    def test_multiple_colons(self) -> None:
-        """Test sentence with multiple colons."""
-        sentences = ["A: B: C"]
-        result = _split_on_colons(sentences)
-        assert len(result) == 3
-        assert result[0] == "A:"
-        assert result[1] == "B:"
-        assert result[2] == "C"
-
-    def test_colon_at_end(self) -> None:
-        """Test sentence ending with colon."""
-        sentences = ["Items:"]
-        result = _split_on_colons(sentences)
-        assert len(result) == 1
-        assert result[0] == "Items:"
-
-    def test_empty_list(self) -> None:
-        """Test empty list returns empty list."""
-        result = _split_on_colons([])
-        assert result == []
-
-    def test_multiple_sentences_mixed(self) -> None:
-        """Test multiple sentences, some with colons, some without."""
-        sentences = [
-            "Normal sentence.",
-            "Note: Important info.",
-            "Another normal one.",
-        ]
-        result = _split_on_colons(sentences)
-        assert len(result) == 4
-        assert result[0] == "Normal sentence."
-        assert result[1] == "Note:"
-        assert result[2] == "Important info."
-        assert result[3] == "Another normal one."
-
-    def test_url_not_split(self) -> None:
-        """Test that URLs with colons are not split."""
-        sentences = ["Visit https://example.com for more info."]
-        result = _split_on_colons(sentences)
-        assert len(result) == 1
-        assert "https://example.com" in result[0]
-
-    def test_http_url_not_split(self) -> None:
-        """Test that http:// URLs are not split."""
-        sentences = ["Visit http://example.com for more info."]
-        result = _split_on_colons(sentences)
-        assert len(result) == 1
-        assert "http://example.com" in result[0]
-
-    def test_multiple_urls_not_split(self) -> None:
-        """Test that multiple URLs are preserved."""
-        sentences = ["Check https://a.com and https://b.com here."]
-        result = _split_on_colons(sentences)
-        assert len(result) == 1
-        assert "https://a.com" in result[0]
-        assert "https://b.com" in result[0]
-
-    def test_colon_with_url(self) -> None:
-        """Test colon splitting with URL in same sentence."""
-        sentences = ["DPA: See https://news.com for details."]
-        result = _split_on_colons(sentences)
-        assert len(result) == 2
-        assert result[0] == "DPA:"
-        assert "https://news.com" in result[1]
-
-
 class TestSplitSentencesColonOption:
-    """Tests for split_sentences with split_on_colon parameter."""
+    """Tests for split_sentences with split_on_colon parameter.
 
-    def test_colon_split_enabled_by_default(self) -> None:
-        """Test that colon splitting is enabled by default."""
+    Note: The split_on_colon parameter is kept for API compatibility but is
+    currently a no-op. Colon handling is now delegated entirely to spaCy.
+    These tests verify the parameter is accepted without errors.
+    """
+
+    def test_split_on_colon_parameter_accepted(self) -> None:
+        """Test that split_on_colon parameter is accepted (API compatibility)."""
         text = "Note: This is important."
-        result = split_sentences(text)
-        assert len(result) == 2
-        assert result[0] == "Note:"
-        assert result[1] == "This is important."
+        # Both values should work without raising errors
+        result_true = split_sentences(text, split_on_colon=True)
+        result_false = split_sentences(text, split_on_colon=False)
+        # Results depend on spaCy's behavior, not our colon logic
+        assert isinstance(result_true, list)
+        assert isinstance(result_false, list)
 
-    def test_colon_split_disabled(self) -> None:
-        """Test that colon splitting can be disabled."""
-        text = "Note: This is important."
-        result = split_sentences(text, split_on_colon=False)
-        assert len(result) == 1
-        assert "Note:" in result[0]
-
-    def test_news_source_split(self) -> None:
-        """Test news source pattern is split."""
-        text = "DPA: Iraqi authorities announced something."
-        result = split_sentences(text)
-        assert len(result) == 2
-        assert result[0] == "DPA:"
-
-    def test_multiple_colons_in_text(self) -> None:
-        """Test text with multiple colons."""
+    def test_colon_handling_delegated_to_spacy(self) -> None:
+        """Test that colon handling is delegated to spaCy."""
         text = "Warning: Do not proceed. Note: This is final."
         result = split_sentences(text)
-        # Should split at sentence boundaries AND colons
-        assert any("Warning:" in s for s in result)
-        assert any("Note:" in s for s in result)
+        # spaCy handles colons - we just verify we get valid output
+        assert len(result) >= 1
+        assert any("Warning" in s for s in result)
+        assert any("Note" in s for s in result)
 
 
 class TestSplitUrls:
@@ -1721,19 +1623,22 @@ class TestSplitText:
         # Should detect changes at index 2 (start of para 1) and 3 (start of para 2)
         assert paragraph_changes == [2, 3]
 
-    def test_sentence_mode_with_colon_splitting(self) -> None:
-        """Test sentence mode respects split_on_colon parameter."""
-        text = "Note: This is important."
+    def test_sentence_mode_with_colon_parameter(self) -> None:
+        """Test sentence mode accepts split_on_colon parameter (API compatibility).
 
-        # With colon splitting (default)
-        result_split = split_text(text, mode="sentence", split_on_colon=True)
-        assert len(result_split) == 2
-        assert result_split[0].text == "Note:"
-        assert result_split[1].text == "This is important."
+        Note: split_on_colon is now a no-op - colon handling is delegated to spaCy.
+        """
+        text = "This is an important notice: Please read carefully."
 
-        # Without colon splitting
-        result_no_split = split_text(text, mode="sentence", split_on_colon=False)
-        assert len(result_no_split) == 1
+        # Both values should work without errors (parameter is accepted but ignored)
+        result_true = split_text(text, mode="sentence", split_on_colon=True)
+        result_false = split_text(text, mode="sentence", split_on_colon=False)
+
+        # Results depend on spaCy's behavior - we just verify valid output
+        assert isinstance(result_true, list)
+        assert isinstance(result_false, list)
+        assert len(result_true) >= 1
+        assert len(result_false) >= 1
 
     def test_sentence_mode_with_corrections(self) -> None:
         """Test sentence mode respects apply_corrections parameter."""

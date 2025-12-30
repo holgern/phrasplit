@@ -15,6 +15,8 @@ Example:
     python runbatcheval.py en --phrasplit  # Evaluate phrasplit only
     python runbatcheval.py --all        # Evaluate all languages
     python runbatcheval.py en -o results.txt  # Save output to file
+    python runbatcheval.py en --model-size sm  # Only test small models
+    python runbatcheval.py en --model-size sm md  # Test small and medium models
 """
 
 import argparse
@@ -248,6 +250,7 @@ def run_segmenter(
     test_file: Path,
     out_file: Path,
     model: str | None = None,
+    split_on_colon: bool = True,
 ) -> tuple[float, bool]:
     """Run a sentence segmenter.
 
@@ -257,6 +260,7 @@ def run_segmenter(
         test_file: Input test file
         out_file: Output file
         model: Optional spaCy model override
+        split_on_colon: Whether to split on colons (only affects phrasplit)
 
     Returns:
         Tuple of (elapsed_time, success)
@@ -276,6 +280,10 @@ def run_segmenter(
 
     if model:
         cmd.extend(["--model", model])
+
+    # Add --no-split-on-colon flag for phrasplit if needed
+    if segmenter == SEGMENTER_PHRASPLIT and not split_on_colon:
+        cmd.append("--no-split-on-colon")
 
     start_time = time.time()
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -359,11 +367,82 @@ def get_model_suffix(model: str) -> str:
     return model.split("_")[-1]
 
 
+def _get_models_to_test(
+    lang_config: LanguageConfig, model_sizes: list[str] | None
+) -> list[str | None]:
+    """Determine which models to test based on language config and size filter."""
+    if not lang_config.models:
+        return [None]  # Use default model for the language
+
+    if model_sizes is None or "all" in model_sizes:
+        models: list[str | None] = list(lang_config.models)
+        return models
+
+    # Filter models by size suffix
+    filtered: list[str | None] = [
+        m
+        for m in lang_config.models
+        if any(m.endswith(f"_{size}") for size in model_sizes)
+    ]
+    return filtered if filtered else [None]  # Fallback to default if no matching models
+
+
+def _get_output_filename(
+    lang_config: LanguageConfig,
+    lang_code: str,
+    segmenter: str,
+    model_suffix: str,
+    model: str | None,
+    flavour: str,
+) -> str:
+    """Generate output filename for segmenter results."""
+    if model:
+        return (
+            f"{lang_config.prefix}_{lang_code}_{segmenter}_{model_suffix}.{flavour}.out"
+        )
+    return f"{lang_config.prefix}_{lang_code}_{segmenter}.{flavour}.out"
+
+
+def _get_errors_prefix(
+    outfiles_dir: Path,
+    lang_config: LanguageConfig,
+    lang_code: str,
+    segmenter: str,
+    model_suffix: str,
+    model: str | None,
+    flavour: str,
+    save_errors: bool,
+) -> str | None:
+    """Generate error file prefix if saving errors."""
+    if not save_errors:
+        return None
+    if model:
+        err_name = (
+            f"{lang_config.prefix}_{lang_code}_{segmenter}_"
+            f"{model_suffix}_{flavour}_errors"
+        )
+    else:
+        err_name = f"{lang_config.prefix}_{lang_code}_{segmenter}_{flavour}_errors"
+    return str(outfiles_dir / err_name)
+
+
+def _print_result_verbose(result: EvalResult) -> None:
+    """Print detailed result metrics."""
+    output.print(f"  True positives: {result.true_positives}")
+    output.print(f"  False positives: {result.false_positives}")
+    output.print(f"  False negatives: {result.false_negatives}")
+    output.print(f"  Precision: {result.precision:.3f}")
+    output.print(f"  Recall: {result.recall:.3f}")
+    output.print(f"  F-measure: {result.f_measure:.3f}")
+
+
 def evaluate_language(
     lang_code: str,
     segmenters: list[str],
     verbose: bool = True,
     save_errors: bool = True,
+    split_on_colon: bool = True,
+    model_sizes: list[str] | None = None,
 ) -> list[EvalResult]:
     """Evaluate segmenters on all flavours for a language.
 
@@ -372,6 +451,8 @@ def evaluate_language(
         segmenters: List of segmenters to test ("spacy", "phrasplit")
         verbose: Print detailed output
         save_errors: Save error files for analysis
+        split_on_colon: Whether to split on colons (only affects phrasplit)
+        model_sizes: Filter models by size (sm, md, lg, trf). None or ["all"] for all.
 
     Returns:
         List of evaluation results
@@ -397,11 +478,7 @@ def evaluate_language(
         print(f"Gold file not found: {gold_file}", file=sys.stderr)
         return []
 
-    # Determine which models to test
-    if lang_config.models:
-        models: list[str | None] = list(lang_config.models)
-    else:
-        models = [None]  # Use default model for the language
+    models = _get_models_to_test(lang_config, model_sizes)
 
     if verbose:
         output.print("#" * 50)
@@ -440,21 +517,19 @@ def evaluate_language(
                         output.print(f"  Test file not found: {test_file}")
                     continue
 
-                # Output file includes segmenter and model suffix
-                if model:
-                    out_name = (
-                        f"{lang_config.prefix}_{lang_code}_{segmenter}_"
-                        f"{model_suffix}.{flavour}.out"
-                    )
-                else:
-                    out_name = (
-                        f"{lang_config.prefix}_{lang_code}_{segmenter}.{flavour}.out"
-                    )
+                out_name = _get_output_filename(
+                    lang_config, lang_code, segmenter, model_suffix, model, flavour
+                )
                 out_file = outfiles_dir / out_name
 
                 # Run segmenter
                 elapsed, success = run_segmenter(
-                    segmenter, lang_config.name, test_file, out_file, model
+                    segmenter,
+                    lang_config.name,
+                    test_file,
+                    out_file,
+                    model,
+                    split_on_colon=split_on_colon,
                 )
 
                 if not success:
@@ -463,21 +538,16 @@ def evaluate_language(
                 if verbose:
                     output.print(f"  Time: {elapsed:.2f}s")
 
-                # Determine error file prefix
-                if save_errors:
-                    if model:
-                        err_name = (
-                            f"{lang_config.prefix}_{lang_code}_{segmenter}_"
-                            f"{model_suffix}_{flavour}_errors"
-                        )
-                    else:
-                        err_name = (
-                            f"{lang_config.prefix}_{lang_code}_{segmenter}_"
-                            f"{flavour}_errors"
-                        )
-                    errors_prefix = str(outfiles_dir / err_name)
-                else:
-                    errors_prefix = None
+                errors_prefix = _get_errors_prefix(
+                    outfiles_dir,
+                    lang_config,
+                    lang_code,
+                    segmenter,
+                    model_suffix,
+                    model,
+                    flavour,
+                    save_errors,
+                )
 
                 # Evaluate
                 metrics = run_segmenteval(gold_file, out_file, errors_prefix, segmenter)
@@ -498,12 +568,7 @@ def evaluate_language(
                     results.append(result)
 
                     if verbose:
-                        output.print(f"  True positives: {result.true_positives}")
-                        output.print(f"  False positives: {result.false_positives}")
-                        output.print(f"  False negatives: {result.false_negatives}")
-                        output.print(f"  Precision: {result.precision:.3f}")
-                        output.print(f"  Recall: {result.recall:.3f}")
-                        output.print(f"  F-measure: {result.f_measure:.3f}")
+                        _print_result_verbose(result)
 
                 if verbose:
                     output.print("=" * 30)
@@ -621,6 +686,19 @@ def main():
         help="Only test phrasplit segmenter",
     )
     parser.add_argument(
+        "--no-split-on-colon",
+        action="store_true",
+        help="Disable splitting on colons (only affects phrasplit)",
+    )
+    parser.add_argument(
+        "--model-size",
+        type=str,
+        nargs="+",
+        choices=["sm", "md", "lg", "trf", "all"],
+        default=["all"],
+        help="Filter models by size (sm, md, lg, trf, or all). Can specify multiple.",
+    )
+    parser.add_argument(
         "-o",
         "--output",
         type=str,
@@ -656,6 +734,8 @@ def main():
             segmenters = [SEGMENTER_SPACY, SEGMENTER_PHRASPLIT]
 
         save_errors = not args.no_errors
+        split_on_colon = not args.no_split_on_colon
+        model_sizes = args.model_size
 
         if args.all:
             all_results = {}
@@ -666,6 +746,8 @@ def main():
                     segmenters,
                     verbose=not args.quiet,
                     save_errors=save_errors,
+                    split_on_colon=split_on_colon,
+                    model_sizes=model_sizes,
                 )
                 if results:
                     all_results[lang_code] = results
@@ -675,7 +757,12 @@ def main():
 
         elif args.lang_code:
             results = evaluate_language(
-                args.lang_code, segmenters, verbose=True, save_errors=save_errors
+                args.lang_code,
+                segmenters,
+                verbose=True,
+                save_errors=save_errors,
+                split_on_colon=split_on_colon,
+                model_sizes=model_sizes,
             )
             if results:
                 print_summary({args.lang_code: results})
