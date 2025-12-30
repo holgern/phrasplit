@@ -327,6 +327,85 @@ def _merge_abbreviation_splits(
     return result
 
 
+# Pattern to detect ellipsis followed by a new sentence
+# Matches: 3+ dots OR spaced ellipsis, followed by whitespace and capital letter
+_ELLIPSIS_SENTENCE_BREAK = re.compile(
+    r"(\.{3,}|\. \. \.)\s+([A-Z])",
+)
+
+# Pattern to detect sentence starting with ellipsis (should merge with previous)
+_ELLIPSIS_START = re.compile(r"^(\. \. \.|\.{3,})\s*")
+
+
+def _split_after_ellipsis(sentences: list[str]) -> list[str]:
+    """
+    Split sentences that contain ellipsis followed by a new sentence.
+
+    When text like "He was tired.... The next day" is processed, spaCy may not
+    recognize the sentence boundary after the ellipsis. This function splits
+    such cases by detecting ellipsis (3+ dots or ". . .") followed by whitespace
+    and a capital letter.
+
+    Also handles the reverse case: when spaCy incorrectly puts ellipsis at the
+    start of a sentence (e.g., after a quote), this function merges the ellipsis
+    back to the previous sentence.
+
+    Args:
+        sentences: List of sentences from spaCy
+
+    Returns:
+        List of sentences with ellipsis boundaries properly handled
+    """
+    if not sentences:
+        return sentences
+
+    # First pass: merge ellipsis that appears at start of sentence to previous
+    merged: list[str] = []
+    for sent in sentences:
+        match = _ELLIPSIS_START.match(sent)
+        if match and merged:
+            # Ellipsis at start - merge with previous sentence
+            ellipsis = match.group(1)
+            rest = sent[match.end() :].strip()
+            # Add ellipsis to previous sentence
+            merged[-1] = merged[-1] + " " + ellipsis
+            # If there's content after ellipsis, it becomes a new sentence
+            if rest:
+                merged.append(rest)
+        else:
+            merged.append(sent)
+
+    # Second pass: split sentences containing ellipsis followed by capital letter
+    result: list[str] = []
+    for sent in merged:
+        # Check if sentence contains ellipsis followed by capital letter
+        match = _ELLIPSIS_SENTENCE_BREAK.search(sent)
+        if not match:
+            result.append(sent)
+            continue
+
+        # Split at the boundary (keep ellipsis with first part)
+        # We need to handle multiple potential splits in one sentence
+        remaining = sent
+        while True:
+            match = _ELLIPSIS_SENTENCE_BREAK.search(remaining)
+            if not match:
+                if remaining.strip():
+                    result.append(remaining.strip())
+                break
+
+            # Split: everything up to and including ellipsis goes to first part
+            # The capital letter starts the second part
+            split_pos = match.end(1)  # End of ellipsis
+            first_part = remaining[:split_pos].strip()
+            remaining = remaining[split_pos:].strip()
+
+            if first_part:
+                result.append(first_part)
+
+    return result
+
+
 def _apply_corrections(
     sentences: list[str],
     language_model: str = "en_core_web_sm",
@@ -338,7 +417,8 @@ def _apply_corrections(
 
     Corrections applied (in order):
     1. Merge sentences incorrectly split after abbreviations (reduces count)
-    2. Split sentences containing multiple URLs (increases count)
+    2. Split sentences after ellipsis followed by capital letter (increases count)
+    3. Split sentences containing multiple URLs (increases count)
 
     Note: Colon handling is minimal - we let spaCy handle colons naturally.
     The split_on_colon parameter is kept for API compatibility but currently
@@ -355,6 +435,9 @@ def _apply_corrections(
     """
     # First merge abbreviation splits (need to combine before other splits)
     sentences = _merge_abbreviation_splits(sentences, language_model)
+
+    # Split after ellipsis followed by new sentence
+    sentences = _split_after_ellipsis(sentences)
 
     # Split URLs (increases sentence count)
     sentences = _split_urls(sentences)

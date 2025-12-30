@@ -22,6 +22,7 @@ from phrasplit.splitter import (
     _process_long_text,
     _protect_ellipsis,
     _restore_ellipsis,
+    _split_after_ellipsis,
     _split_at_clauses,
     _split_sentence_into_clauses,
     _split_urls,
@@ -1920,3 +1921,94 @@ class TestProcessLongText:
 
         # Should have processed the text
         assert isinstance(result, list)
+
+
+class TestSplitAfterEllipsis:
+    """Tests for _split_after_ellipsis function.
+
+    This function handles two cases:
+    1. Splitting sentences after ellipsis followed by capital letter (new sentence)
+    2. Merging ellipsis at start of sentence back to previous sentence
+    """
+
+    def test_split_after_three_dots(self) -> None:
+        """Test splitting after three-dot ellipsis followed by capital."""
+        sentences = ["He was tired... The next day was better."]
+        result = _split_after_ellipsis(sentences)
+        assert result == ["He was tired...", "The next day was better."]
+
+    def test_split_after_four_dots(self) -> None:
+        """Test splitting after four-dot ellipsis followed by capital."""
+        sentences = ["She stopped the treatments.... Remember the old times."]
+        result = _split_after_ellipsis(sentences)
+        assert result == ["She stopped the treatments....", "Remember the old times."]
+
+    def test_split_after_many_dots(self) -> None:
+        """Test splitting after many dots (5+) followed by capital."""
+        sentences = ["About radiation in Chernobyl....... The children suffered."]
+        result = _split_after_ellipsis(sentences)
+        assert result == [
+            "About radiation in Chernobyl.......",
+            "The children suffered.",
+        ]
+
+    def test_split_after_spaced_ellipsis(self) -> None:
+        """Test splitting after spaced ellipsis (. . .) followed by capital."""
+        sentences = ["Four hot spots. . . . Bush answered the question."]
+        result = _split_after_ellipsis(sentences)
+        assert result == ["Four hot spots. . . .", "Bush answered the question."]
+
+    def test_merge_ellipsis_at_start(self) -> None:
+        """Test merging ellipsis at start of sentence to previous."""
+        sentences = ['He said "yes."', ". . . Then he left."]
+        result = _split_after_ellipsis(sentences)
+        assert result == ['He said "yes." . . .', "Then he left."]
+
+    def test_merge_three_dots_at_start(self) -> None:
+        """Test merging three-dot ellipsis at start of sentence."""
+        sentences = ["The quote ended.", "... And life went on."]
+        result = _split_after_ellipsis(sentences)
+        assert result == ["The quote ended. ...", "And life went on."]
+
+    def test_no_split_lowercase_after_ellipsis(self) -> None:
+        """Test no split when lowercase follows ellipsis."""
+        sentences = ["He said... and then continued."]
+        result = _split_after_ellipsis(sentences)
+        assert result == ["He said... and then continued."]
+
+    def test_no_split_no_ellipsis(self) -> None:
+        """Test sentences without ellipsis are unchanged."""
+        sentences = ["Regular sentence.", "Another one."]
+        result = _split_after_ellipsis(sentences)
+        assert result == ["Regular sentence.", "Another one."]
+
+    def test_empty_list(self) -> None:
+        """Test empty input returns empty output."""
+        assert _split_after_ellipsis([]) == []
+
+    def test_multiple_ellipsis_splits(self) -> None:
+        """Test sentence with multiple ellipsis boundaries."""
+        sentences = ["First... Second... Third sentence."]
+        result = _split_after_ellipsis(sentences)
+        assert result == ["First...", "Second...", "Third sentence."]
+
+    def test_integration_with_split_sentences(self) -> None:
+        """Test ellipsis splitting works in full split_sentences pipeline."""
+        text = "He was tired.... The next day was better."
+        result = split_sentences(text)
+        assert result == ["He was tired....", "The next day was better."]
+
+    def test_integration_spaced_ellipsis_after_quote(self) -> None:
+        """Test spaced ellipsis after quote is handled correctly."""
+        text = 'She said "four questions." . . . Then she left.'
+        result = split_sentences(text)
+        assert result == ['She said "four questions." . . .', "Then she left."]
+
+    def test_integration_many_dots(self) -> None:
+        """Test many dots followed by new sentence."""
+        text = "The effects of radiation....... The children suffered greatly."
+        result = split_sentences(text)
+        assert result == [
+            "The effects of radiation.......",
+            "The children suffered greatly.",
+        ]
