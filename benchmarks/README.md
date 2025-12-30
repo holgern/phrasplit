@@ -4,10 +4,11 @@ This directory contains benchmarking tools to evaluate sentence segmentation per
 against gold standard datasets from
 [Universal Dependencies](https://universaldependencies.org/).
 
-The benchmark compares two segmenters:
+The benchmark compares multiple segmenters:
 
-- **spaCy** - Raw spaCy sentence segmentation (baseline)
+- **spaCy** - Raw spaCy sentence segmentation (parser-based, baseline)
 - **phrasplit** - spaCy + phrasplit's preprocessing and post-processing corrections
+- **Sentencizer** - spaCy's rule-based sentence segmenter (no model required)
 
 ## Quick Start
 
@@ -64,6 +65,9 @@ python runbatcheval.py en --spacy
 
 # Evaluate only phrasplit
 python runbatcheval.py en --phrasplit
+
+# Evaluate only rule-based Sentencizer
+python runbatcheval.py en --sentencizer
 
 # Evaluate all languages
 python runbatcheval.py --all
@@ -231,6 +235,24 @@ python spacy_segmenter.py English testsets/UD_English.dataset.none outfiles/outp
     --model en_core_web_lg
 ```
 
+### `sentencizer_segmenter.py`
+
+Rule-based sentence segmenter using spaCy's `Sentencizer` component. Unlike the parser-
+based segmenters, this uses simple punctuation rules and doesn't require a trained
+model. Useful for comparing rule-based vs parser-based approaches.
+
+```bash
+# Basic usage (uses blank spaCy model with Sentencizer)
+python sentencizer_segmenter.py English testsets/UD_English.dataset.none outfiles/output.out
+
+# Customize punctuation characters
+python sentencizer_segmenter.py English input.txt output.txt \
+    --punct-chars '.!?'
+```
+
+The Sentencizer is faster but generally less accurate than parser-based segmentation,
+especially for complex sentences with abbreviations or unusual punctuation.
+
 ### `cleanup.py`
 
 Removes all downloaded datasets and generated output files.
@@ -243,6 +265,52 @@ python cleanup.py --dry-run
 python cleanup.py
 ```
 
+### `compare_segmenters.py`
+
+Compares two segmenters against a gold standard to find where they differ. Useful for
+understanding what one segmenter fixes or breaks compared to another.
+
+```bash
+# Compare spaCy vs phrasplit
+python compare_segmenters.py testsets/UD_English.dataset.gold \
+    outfiles/UD_en_spacy_lg.all.out \
+    outfiles/UD_en_phrasplit_lg.all.out \
+    --names spacy phrasplit \
+    -o outfiles/comparison_report.txt
+
+# Compare any two segmenters
+python compare_segmenters.py gold.txt segmenter_a.out segmenter_b.out
+```
+
+Output includes:
+
+- **Metrics comparison**: True positives, false positives/negatives, precision, recall,
+  F1 for both segmenters with differences
+- **B Regressions**: Boundaries that A got right but B missed
+- **B Improvements**: Boundaries that B got right but A missed
+- **B Introduced FP**: False positives B added that A didn't have
+- **B Fixed FP**: False positives A had that B correctly avoided
+
+Each case includes full context around the boundary:
+
+```
+[1] Gold sentence 635
+    ...Karzai, Musharraf new regional equations / KABUL: |BREAK| For the past 25 years landlocked Afghanistan...
+```
+
+Example summary output:
+
+```
+=== SUMMARY ===
+Total gold boundaries: 12544
+Both correct: 83
+Neither correct: 12015
+spacy only (B regression): 217
+phrasplit only (B improvement): 229
+spacy false positives: 451
+phrasplit false positives: 409
+```
+
 ## Directory Structure
 
 After downloading datasets:
@@ -251,8 +319,10 @@ After downloading datasets:
 benchmarks/
   build-testset.py
   cleanup.py
+  compare_segmenters.py
   debug_sentence.py
   phrasplit_segmenter.py
+  sentencizer_segmenter.py
   spacy_segmenter.py
   runbatcheval.py
   runeverything.py
@@ -266,6 +336,8 @@ benchmarks/
   outfiles/           # Evaluation outputs (not in git)
     UD_en_spacy_sm.none.out
     UD_en_phrasplit_sm.none.out
+    UD_en_sentencizer.none.out
+    spacy_vs_phrasplit_lg_comparison.txt
     ...
 ```
 

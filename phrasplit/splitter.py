@@ -56,6 +56,12 @@ _URL_PATTERN = re.compile(r"(https?://\S+)")
 # Matches: word ending with period, where word (without period) is in abbreviations
 _ABBREV_END_PATTERN = re.compile(r"(\b[A-Za-z]+)\.\s*$")
 
+# Default maximum chunk size for spaCy processing (will be capped by nlp.max_length)
+_DEFAULT_MAX_CHUNK_SIZE = 500000
+
+# Safety margin at chunk boundaries to avoid cutting sentences
+_DEFAULT_SAFETY_MARGIN = 100
+
 
 def _fix_hyphenated_linebreaks(text: str) -> str:
     """
@@ -400,6 +406,69 @@ def _extract_sentences(doc) -> list[str]:
     return [sent.text.strip() for sent in doc.sents if sent.text.strip()]
 
 
+def _process_long_text(
+    text: str,
+    nlp: Language,
+    max_chunk: int = _DEFAULT_MAX_CHUNK_SIZE,
+    safety_margin: int = _DEFAULT_SAFETY_MARGIN,
+) -> list[str]:
+    """Process text that may exceed spaCy's max_length incrementally.
+
+    Uses index-based tracking to extract sentences from long text without
+    cutting sentences at chunk boundaries.
+
+    Args:
+        text: Input text (should be preprocessed, ellipsis protected)
+        nlp: spaCy Language model
+        max_chunk: Maximum characters to process at once
+        safety_margin: Buffer at chunk end to avoid cutting sentences
+
+    Returns:
+        List of sentence strings (stripped, non-empty)
+    """
+    # Cap max_chunk to spaCy's limit minus safety margin
+    effective_max = min(max_chunk, nlp.max_length - safety_margin)
+
+    if len(text) <= effective_max:
+        doc = nlp(text)
+        return _extract_sentences(doc)
+
+    sentences: list[str] = []
+    start_idx = 0
+
+    while start_idx < len(text):
+        end_idx = min(start_idx + effective_max, len(text))
+        chunk = text[start_idx:end_idx]
+        doc = nlp(chunk)
+
+        if end_idx >= len(text):
+            # Last chunk - take all sentences
+            sentences.extend(_extract_sentences(doc))
+            break
+
+        # Not the last chunk - keep only complete sentences
+        last_complete_end = 0
+        for sent in doc.sents:
+            sent_text = sent.text.strip()
+            if sent_text and sent.end_char < len(chunk) - safety_margin:
+                sentences.append(sent_text)
+                last_complete_end = sent.end_char
+
+        # Move start index forward
+        if last_complete_end > 0:
+            start_idx += last_complete_end
+        else:
+            # No sentence boundary found - take all and move on
+            sentences.extend(_extract_sentences(doc))
+            start_idx = end_idx
+
+        # Skip leading whitespace for next iteration
+        while start_idx < len(text) and text[start_idx] in " \t\n\r":
+            start_idx += 1
+
+    return sentences
+
+
 def split_paragraphs(text: str) -> list[str]:
     """
     Split text into paragraphs (separated by double newlines).
@@ -449,9 +518,8 @@ def split_sentences(
         # Protect ellipsis from being treated as sentence boundaries
         para = _protect_ellipsis(para)
 
-        # Process paragraph into sentences
-        doc = nlp(para)
-        sentences = _extract_sentences(doc)
+        # Process paragraph into sentences (handles long text)
+        sentences = _process_long_text(para, nlp)
 
         for sent in sentences:
             # Restore ellipsis in the sentence
@@ -521,9 +589,8 @@ def split_clauses(
         # Protect ellipsis from being treated as sentence boundaries
         para = _protect_ellipsis(para)
 
-        # Process paragraph into sentences
-        doc = nlp(para)
-        sentences = _extract_sentences(doc)
+        # Process paragraph into sentences (handles long text)
+        sentences = _process_long_text(para, nlp)
 
         # Process each sentence into clauses
         for sent in sentences:
@@ -627,9 +694,8 @@ def _split_at_boundaries(text: str, max_length: int, nlp: Language) -> list[str]
     # Protect ellipsis before spaCy processing
     protected_text = _protect_ellipsis(text)
 
-    # First, try splitting by sentences
-    doc = nlp(protected_text)
-    sentences = _extract_sentences(doc)
+    # Split into sentences (handles long text)
+    sentences = _process_long_text(protected_text, nlp)
 
     result: list[str] = []
     current_line = ""
@@ -781,9 +847,8 @@ def split_text(
         # Protect ellipsis from being treated as sentence boundaries
         protected_para = _protect_ellipsis(para)
 
-        # Process paragraph into sentences
-        doc = nlp(protected_para)
-        sentences = _extract_sentences(doc)
+        # Process paragraph into sentences (handles long text)
+        sentences = _process_long_text(protected_para, nlp)
 
         # Restore ellipsis in sentences
         sentences = [_restore_ellipsis(sent) for sent in sentences]

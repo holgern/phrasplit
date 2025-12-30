@@ -8,6 +8,7 @@ This tests the actual phrasplit.split_sentences() function including:
 - Whitespace normalization
 - Ellipsis protection
 - Post-processing corrections (abbreviation merge, URL split)
+- Long text handling (automatic chunking for text exceeding spaCy's max_length)
 """
 
 import argparse
@@ -18,56 +19,6 @@ import sys
 sys.path.insert(0, str(__file__).rsplit("/", 2)[0])
 
 from phrasplit import split_sentences  # noqa: E402
-
-# Maximum characters to process at once (spaCy default limit is 1,000,000)
-# We use a smaller chunk to be safe
-MAX_CHUNK_SIZE = 500000
-
-
-def chunk_text(text: str, max_size: int = MAX_CHUNK_SIZE) -> list[str]:
-    """Split text into chunks that won't exceed spaCy's max_length.
-
-    Splits at sentence-ending punctuation followed by whitespace to minimize
-    breaking sentences across chunks.
-
-    Args:
-        text: The text to chunk
-        max_size: Maximum size of each chunk
-
-    Returns:
-        List of text chunks
-    """
-    if len(text) <= max_size:
-        return [text]
-
-    chunks = []
-    remaining = text
-
-    while remaining:
-        if len(remaining) <= max_size:
-            chunks.append(remaining)
-            break
-
-        # Find a good split point (sentence boundary) before max_size
-        chunk = remaining[:max_size]
-
-        # Look for last sentence-ending punctuation followed by space
-        # Search backwards from the end of the chunk
-        split_pos = -1
-        for i in range(len(chunk) - 1, max(0, len(chunk) - 10000), -1):
-            if chunk[i] in ".!?" and i + 1 < len(chunk) and chunk[i + 1] in " \n\t":
-                split_pos = i + 1
-                break
-
-        if split_pos == -1:
-            # No good split point found, just split at max_size
-            split_pos = max_size
-
-        chunks.append(remaining[:split_pos])
-        remaining = remaining[split_pos:].lstrip(" \t\n\r")
-
-    return chunks
-
 
 # Language to spaCy model mapping
 LANG_TO_MODEL = {
@@ -208,21 +159,18 @@ def main() -> None:
                 if not line:
                     continue
 
-                # Chunk the line if it's too long for spaCy
-                chunks = chunk_text(line)
+                # Use the actual phrasplit.split_sentences() function
+                # Long text handling is built-in (automatic chunking)
+                split_on_colon = not args.no_split_on_colon
+                sentences = split_sentences(
+                    line,
+                    language_model=model_name,
+                    split_on_colon=split_on_colon,
+                )
 
-                for chunk in chunks:
-                    # Use the actual phrasplit.split_sentences() function
-                    split_on_colon = not args.no_split_on_colon
-                    sentences = split_sentences(
-                        chunk,
-                        language_model=model_name,
-                        split_on_colon=split_on_colon,
-                    )
-
-                    # Write each sentence on its own line
-                    for sentence in sentences:
-                        output_f.write(sentence + "\n")
+                # Write each sentence on its own line
+                for sentence in sentences:
+                    output_f.write(sentence + "\n")
 
 
 if __name__ == "__main__":

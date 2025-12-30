@@ -11,12 +11,15 @@ from phrasplit import (
     split_text,
 )
 from phrasplit.splitter import (
+    _DEFAULT_MAX_CHUNK_SIZE,
+    _DEFAULT_SAFETY_MARGIN,
     _apply_corrections,
     _fix_hyphenated_linebreaks,
     _hard_split,
     _merge_abbreviation_splits,
     _normalize_whitespace,
     _preprocess_text,
+    _process_long_text,
     _protect_ellipsis,
     _restore_ellipsis,
     _split_at_clauses,
@@ -1673,3 +1676,247 @@ class TestSplitText:
         assert len(result) == 1
         assert "..." in result[0].text
         assert ". . ." not in result[0].text
+
+
+class TestProcessLongText:
+    """Tests for _process_long_text function.
+
+    Tests handling of text that may exceed spaCy's max_length.
+    """
+
+    def test_short_text_single_pass(self) -> None:
+        """Test that short text is processed normally in a single pass."""
+        from unittest.mock import MagicMock
+
+        # Create a mock nlp object
+        nlp = MagicMock()
+        nlp.max_length = 1000000
+
+        # Create mock Doc with sentences
+        mock_sent1 = MagicMock()
+        mock_sent1.text = "First sentence."
+        mock_sent1.end_char = 15
+
+        mock_sent2 = MagicMock()
+        mock_sent2.text = "Second sentence."
+        mock_sent2.end_char = 32
+
+        mock_doc = MagicMock()
+        mock_doc.sents = [mock_sent1, mock_sent2]
+        nlp.return_value = mock_doc
+
+        text = "First sentence. Second sentence."
+        result = _process_long_text(text, nlp, max_chunk=500000)
+
+        # Should call nlp once for short text
+        assert nlp.call_count == 1
+        assert result == ["First sentence.", "Second sentence."]
+
+    def test_long_text_chunked_processing(self) -> None:
+        """Test that long text is chunked at sentence boundaries."""
+        from unittest.mock import MagicMock
+
+        nlp = MagicMock()
+        nlp.max_length = 1000000
+
+        # First chunk
+        mock_sent1 = MagicMock()
+        mock_sent1.text = "Sentence one."
+        mock_sent1.end_char = 13
+
+        mock_doc1 = MagicMock()
+        mock_doc1.sents = [mock_sent1]
+        mock_doc1.__len__ = lambda self: 50  # chunk length
+
+        # Second chunk (last)
+        mock_sent2 = MagicMock()
+        mock_sent2.text = "Sentence two."
+        mock_sent2.end_char = 13
+
+        mock_doc2 = MagicMock()
+        mock_doc2.sents = [mock_sent2]
+
+        nlp.side_effect = [mock_doc1, mock_doc2]
+
+        # Create text longer than max_chunk
+        text = "Sentence one. " + " " * 40 + "Sentence two."
+        result = _process_long_text(text, nlp, max_chunk=50, safety_margin=10)
+
+        # Should process in chunks
+        assert nlp.call_count >= 1
+        assert "Sentence one." in result
+        assert "Sentence two." in result
+
+    def test_respects_nlp_max_length(self) -> None:
+        """Test that effective_max is capped by nlp.max_length."""
+        from unittest.mock import MagicMock
+
+        nlp = MagicMock()
+        nlp.max_length = 100  # Very small limit
+
+        mock_sent = MagicMock()
+        mock_sent.text = "Test."
+        mock_sent.end_char = 5
+
+        mock_doc = MagicMock()
+        mock_doc.sents = [mock_sent]
+        nlp.return_value = mock_doc
+
+        text = "Test."
+        # max_chunk is larger than nlp.max_length
+        result = _process_long_text(text, nlp, max_chunk=500000, safety_margin=10)
+
+        assert result == ["Test."]
+        # effective_max should be min(500000, 100 - 10) = 90
+
+    def test_empty_text_returns_empty_list(self) -> None:
+        """Test that empty text returns empty list."""
+        from unittest.mock import MagicMock
+
+        nlp = MagicMock()
+        nlp.max_length = 1000000
+
+        mock_doc = MagicMock()
+        mock_doc.sents = []
+        nlp.return_value = mock_doc
+
+        result = _process_long_text("", nlp)
+        assert result == []
+
+    def test_whitespace_only_text(self) -> None:
+        """Test that whitespace-only text returns empty list."""
+        from unittest.mock import MagicMock
+
+        nlp = MagicMock()
+        nlp.max_length = 1000000
+
+        mock_sent = MagicMock()
+        mock_sent.text = "   "  # whitespace only
+
+        mock_doc = MagicMock()
+        mock_doc.sents = [mock_sent]
+        nlp.return_value = mock_doc
+
+        result = _process_long_text("   ", nlp)
+        # strip() makes it empty, so not included
+        assert result == []
+
+    def test_no_sentence_boundary_still_progresses(self) -> None:
+        """Test that processing progresses even without sentence boundaries."""
+        from unittest.mock import MagicMock
+
+        nlp = MagicMock()
+        nlp.max_length = 1000000
+
+        # Sentence spans entire chunk (no safe boundary)
+        mock_sent = MagicMock()
+        mock_sent.text = "Very long sentence without breaks"
+        mock_sent.end_char = 100  # Beyond safety margin
+
+        mock_doc = MagicMock()
+        mock_doc.sents = [mock_sent]
+        nlp.return_value = mock_doc
+
+        # Small chunk size forces chunking
+        text = "Very long sentence without breaks" + " " * 50
+        result = _process_long_text(text, nlp, max_chunk=50, safety_margin=10)
+
+        # Should still return sentences and not infinite loop
+        assert isinstance(result, list)
+
+    def test_skips_leading_whitespace_between_chunks(self) -> None:
+        """Test that leading whitespace is skipped between chunks."""
+        from unittest.mock import MagicMock
+
+        nlp = MagicMock()
+        nlp.max_length = 1000000
+
+        # First chunk
+        mock_sent1 = MagicMock()
+        mock_sent1.text = "First."
+        mock_sent1.end_char = 6
+
+        mock_doc1 = MagicMock()
+        mock_doc1.sents = [mock_sent1]
+
+        # Second chunk - after skipping whitespace
+        mock_sent2 = MagicMock()
+        mock_sent2.text = "Second."
+        mock_sent2.end_char = 7
+
+        mock_doc2 = MagicMock()
+        mock_doc2.sents = [mock_sent2]
+
+        nlp.side_effect = [mock_doc1, mock_doc2]
+
+        # Text with whitespace between sentences
+        text = "First.     Second."
+        result = _process_long_text(text, nlp, max_chunk=10, safety_margin=2)
+
+        # Both sentences should be captured
+        assert "First." in result
+
+    def test_default_constants_values(self) -> None:
+        """Test that default constants have expected values."""
+        assert _DEFAULT_MAX_CHUNK_SIZE == 500000
+        assert _DEFAULT_SAFETY_MARGIN == 100
+
+    def test_last_chunk_takes_all_sentences(self) -> None:
+        """Test that the last chunk takes all remaining sentences."""
+        from unittest.mock import MagicMock
+
+        nlp = MagicMock()
+        nlp.max_length = 1000000
+
+        # Single short chunk (last chunk case)
+        mock_sent1 = MagicMock()
+        mock_sent1.text = "Final one."
+        mock_sent1.end_char = 10
+
+        mock_sent2 = MagicMock()
+        mock_sent2.text = "Final two."
+        mock_sent2.end_char = 21
+
+        mock_doc = MagicMock()
+        mock_doc.sents = [mock_sent1, mock_sent2]
+        nlp.return_value = mock_doc
+
+        text = "Final one. Final two."
+        result = _process_long_text(text, nlp, max_chunk=500000)
+
+        # Both sentences should be included
+        assert len(result) == 2
+        assert "Final one." in result
+        assert "Final two." in result
+
+    def test_safety_margin_prevents_boundary_cuts(self) -> None:
+        """Test that safety margin keeps sentences from being cut at boundaries."""
+        from unittest.mock import MagicMock
+
+        nlp = MagicMock()
+        nlp.max_length = 1000000
+
+        # Sentence that ends close to chunk boundary
+        mock_sent = MagicMock()
+        mock_sent.text = "Sentence near boundary."
+        # end_char is within safety_margin of chunk end
+        mock_sent.end_char = 45  # chunk is 50, safety is 10, so 45 > 40
+
+        mock_doc = MagicMock()
+        mock_doc.sents = [mock_sent]
+
+        # Final chunk
+        mock_sent_final = MagicMock()
+        mock_sent_final.text = "Final."
+        mock_sent_final.end_char = 6
+
+        mock_doc_final = MagicMock()
+        mock_doc_final.sents = [mock_sent_final]
+
+        nlp.side_effect = [mock_doc, mock_doc_final]
+
+        text = "Sentence near boundary." + " " * 30 + "Final."
+        result = _process_long_text(text, nlp, max_chunk=50, safety_margin=10)
+
+        # Should have processed the text
+        assert isinstance(result, list)
