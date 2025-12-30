@@ -388,6 +388,18 @@ def _get_nlp(language_model: str = "en_core_web_sm") -> Language:
     return _nlp_cache[language_model]
 
 
+def _extract_sentences(doc) -> list[str]:
+    """Extract sentences from a spaCy Doc object.
+
+    Args:
+        doc: A spaCy Doc object
+
+    Returns:
+        List of sentence strings (stripped, non-empty)
+    """
+    return [sent.text.strip() for sent in doc.sents if sent.text.strip()]
+
+
 def split_paragraphs(text: str) -> list[str]:
     """
     Split text into paragraphs (separated by double newlines).
@@ -439,7 +451,7 @@ def split_sentences(
 
         # Process paragraph into sentences
         doc = nlp(para)
-        sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
+        sentences = _extract_sentences(doc)
 
         for sent in sentences:
             # Restore ellipsis in the sentence
@@ -511,7 +523,7 @@ def split_clauses(
 
         # Process paragraph into sentences
         doc = nlp(para)
-        sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
+        sentences = _extract_sentences(doc)
 
         # Process each sentence into clauses
         for sent in sentences:
@@ -617,7 +629,7 @@ def _split_at_boundaries(text: str, max_length: int, nlp: Language) -> list[str]
 
     # First, try splitting by sentences
     doc = nlp(protected_text)
-    sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
+    sentences = _extract_sentences(doc)
 
     result: list[str] = []
     current_line = ""
@@ -771,7 +783,7 @@ def split_text(
 
         # Process paragraph into sentences
         doc = nlp(protected_para)
-        sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
+        sentences = _extract_sentences(doc)
 
         # Restore ellipsis in sentences
         sentences = [_restore_ellipsis(sent) for sent in sentences]

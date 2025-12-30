@@ -33,6 +33,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 # Segmenter types
 SEGMENTER_SPACY = "spacy"
 SEGMENTER_PHRASPLIT = "phrasplit"
+SEGMENTER_SENTENCIZER = "sentencizer"
 
 
 class Output:
@@ -267,6 +268,8 @@ def run_segmenter(
     """
     if segmenter == SEGMENTER_SPACY:
         script = SCRIPT_DIR / "spacy_segmenter.py"
+    elif segmenter == SEGMENTER_SENTENCIZER:
+        script = SCRIPT_DIR / "sentencizer_segmenter.py"
     else:
         script = SCRIPT_DIR / "phrasplit_segmenter.py"
 
@@ -686,6 +689,11 @@ def main():
         help="Only test phrasplit segmenter",
     )
     parser.add_argument(
+        "--sentencizer",
+        action="store_true",
+        help="Only test rule-based sentencizer (no model required)",
+    )
+    parser.add_argument(
         "--no-split-on-colon",
         action="store_true",
         help="Disable splitting on colons (only affects phrasplit)",
@@ -723,15 +731,19 @@ def main():
             return
 
         # Determine which segmenters to test
-        if args.spacy and args.phrasplit:
+        selected = []
+        if args.spacy:
+            selected.append(SEGMENTER_SPACY)
+        if args.phrasplit:
+            selected.append(SEGMENTER_PHRASPLIT)
+        if args.sentencizer:
+            selected.append(SEGMENTER_SENTENCIZER)
+
+        # Default: test spacy and phrasplit (original behavior)
+        if not selected:
             segmenters = [SEGMENTER_SPACY, SEGMENTER_PHRASPLIT]
-        elif args.spacy:
-            segmenters = [SEGMENTER_SPACY]
-        elif args.phrasplit:
-            segmenters = [SEGMENTER_PHRASPLIT]
         else:
-            # Default: test both
-            segmenters = [SEGMENTER_SPACY, SEGMENTER_PHRASPLIT]
+            segmenters = selected
 
         save_errors = not args.no_errors
         split_on_colon = not args.no_split_on_colon
