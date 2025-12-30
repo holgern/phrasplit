@@ -9,15 +9,26 @@ This helps identify where corrections or changes between segmenters
 help or hurt sentence boundary detection.
 
 Usage:
-    python compare_segmenters.py gold.txt segmenter_a.txt segmenter_b.txt
-    python compare_segmenters.py gold.txt spacy.out phrasplit.out --names spacy phrasplit
-    python compare_segmenters.py gold.txt a.out b.out -o comparison_results.txt
+    python compare_segmenters.py en spacy phrasplit -m lg -v all
+    python compare_segmenters.py de spacy phrasplit -m sm -v none -o result.txt
+    python compare_segmenters.py --list
 
-Example with benchmark files:
-    python compare_segmenters.py testsets/UD_English.dataset.gold \\
-        outfiles/UD_en_spacy_lg.all.out \\
-        outfiles/UD_en_phrasplit_lg.all.out \\
-        --names spacy phrasplit
+Examples:
+    # Compare spaCy vs phrasplit on English with lg model
+    python compare_segmenters.py en spacy phrasplit -m lg -v all
+
+    # Compare on German with md model, none variant (hardest test)
+    python compare_segmenters.py de spacy phrasplit -m md -v none
+
+    # Compare sentencizer vs phrasplit
+    python compare_segmenters.py en sentencizer phrasplit -m sm -v all
+
+    # Save output to file
+    python compare_segmenters.py en spacy phrasplit -m lg -v all -o comparison.txt
+
+    # Use custom files (override auto-detection)
+    python compare_segmenters.py en spacy phrasplit -m lg -v all \\
+        --file-a custom_a.out --file-b custom_b.out --gold custom.gold
 """
 
 import argparse
@@ -26,15 +37,55 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Valid segmenter names
+VALID_SEGMENTERS = ["spacy", "phrasplit", "sentencizer"]
 
-@dataclass
-class BoundaryResult:
-    """Result of checking a boundary for a specific segmenter."""
+# Valid model sizes
+VALID_MODEL_SIZES = ["sm", "md", "lg"]
 
-    position: int  # Position in stripped text (no spaces)
-    original_position: int  # Position in original text
-    found: bool  # Whether the segmenter found this boundary
-    context: str  # Context around the boundary
+# Valid test variants
+VALID_VARIANTS = ["all", "none", "mixed"]
+
+# Language code to language name mapping
+LANG_CODE_TO_NAME = {
+    "bg": "Bulgarian",
+    "ca": "Catalan",
+    "cnr": "Montenegrin",
+    "cs": "Czech",
+    "da": "Danish",
+    "de": "German",
+    "el": "Greek",
+    "en": "English",
+    "es": "Spanish",
+    "et": "Estonian",
+    "fi": "Finnish",
+    "fr": "French",
+    "hr": "Croatian",
+    "hu": "Hungarian",
+    "is": "Icelandic",
+    "it": "Italian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "lt": "Lithuanian",
+    "lv": "Latvian",
+    "mk": "Macedonian",
+    "mt": "Maltese",
+    "nb": "Norwegian-Bokmaal",
+    "nl": "Dutch",
+    "nn": "Norwegian-Nynorsk",
+    "pl": "Polish",
+    "pt": "Portuguese",
+    "ro": "Romanian",
+    "ru": "Russian",
+    "sk": "Slovak",
+    "sl": "Slovenian",
+    "sq": "Albanian",
+    "sr": "Serbian",
+    "sv": "Swedish",
+    "tr": "Turkish",
+    "uk": "Ukrainian",
+    "zh": "Chinese",
+}
 
 
 @dataclass
@@ -216,11 +267,36 @@ def compare_segmenters(
         total_boundaries=len(gold_boundaries),
     )
 
-    # Compare each gold boundary
+    # Build mapping: for each position in stripped text (no spaces),
+    # what position is it in content (no spaces, no newlines)?
+    # This allows us to compare boundaries across texts with different newline counts.
+    def build_content_pos_map(stripped: str) -> list[int]:
+        """Map stripped positions to content positions (excluding newlines)."""
+        content_pos = 0
+        pos_map = []
+        for c in stripped:
+            if c == "\n":
+                pos_map.append(content_pos)  # newline maps to position after
+            else:
+                pos_map.append(content_pos)
+                content_pos += 1
+        return pos_map
+
+    gold_to_content = build_content_pos_map(gold_stripped)
+    a_to_content = build_content_pos_map(a_stripped)
+    b_to_content = build_content_pos_map(b_stripped)
+
+    # Convert segmenter boundaries to content positions for comparison
+    a_boundary_content_pos = {a_to_content[p] for p in a_boundaries}
+    b_boundary_content_pos = {b_to_content[p] for p in b_boundaries}
+
+    # Compare each gold boundary using content positions
     gold_sent_num = 1
     for pos in sorted(gold_boundaries):
-        a_found = pos in a_boundaries
-        b_found = pos in b_boundaries
+        # Convert gold position to content position for comparison
+        gold_content_pos = gold_to_content[pos]
+        a_found = gold_content_pos in a_boundary_content_pos
+        b_found = gold_content_pos in b_boundary_content_pos
 
         # Get context from original gold text
         orig_pos = gold_pos_map[pos] if pos < len(gold_pos_map) else len(gold_text)
@@ -248,28 +324,7 @@ def compare_segmenters(
         gold_sent_num += 1
 
     # Analyze false positives (boundaries in test but not in gold)
-    # We need to map test positions to gold positions for comparison
-    # Since content matches, we can compare positions after removing newlines
-
-    # Build mapping: for each position in stripped text (no spaces),
-    # what position is it in content (no spaces, no newlines)?
-    def build_content_pos_map(stripped: str) -> list[int]:
-        """Map stripped positions to content positions (excluding newlines)."""
-        content_pos = 0
-        pos_map = []
-        for c in stripped:
-            if c == "\n":
-                pos_map.append(content_pos)  # newline maps to position after
-            else:
-                pos_map.append(content_pos)
-                content_pos += 1
-        return pos_map
-
-    gold_to_content = build_content_pos_map(gold_stripped)
-    a_to_content = build_content_pos_map(a_stripped)
-    b_to_content = build_content_pos_map(b_stripped)
-
-    # Convert gold boundaries to content positions
+    # Convert gold boundaries to content positions for comparison
     gold_boundary_content_pos = {gold_to_content[p] for p in gold_boundaries}
 
     # Find false positives for each segmenter
@@ -380,14 +435,16 @@ def format_report(result: ComparisonResult) -> str:
     lines.append("METRICS COMPARISON")
     lines.append(sep)
     lines.append(
-        f"{'Metric':<20} {result.segmenter_a_name:<15} {result.segmenter_b_name:<15} {'Difference':<15}"
+        f"{'Metric':<20} {result.segmenter_a_name:<15} "
+        f"{result.segmenter_b_name:<15} {'Difference':<15}"
     )
     lines.append("-" * 65)
     lines.append(f"{'True Positives':<20} {a_tp:<15} {b_tp:<15} {b_tp - a_tp:+d}")
     lines.append(f"{'False Negatives':<20} {a_fn:<15} {b_fn:<15} {b_fn - a_fn:+d}")
     lines.append(f"{'False Positives':<20} {a_fp:<15} {b_fp:<15} {b_fp - a_fp:+d}")
     lines.append(
-        f"{'Precision':<20} {a_precision:<15.4f} {b_precision:<15.4f} {b_precision - a_precision:+.4f}"
+        f"{'Precision':<20} {a_precision:<15.4f} "
+        f"{b_precision:<15.4f} {b_precision - a_precision:+.4f}"
     )
     lines.append(
         f"{'Recall':<20} {a_recall:<15.4f} {b_recall:<15.4f} {b_recall - a_recall:+.4f}"
@@ -402,10 +459,12 @@ def format_report(result: ComparisonResult) -> str:
     lines.append(f"{result.segmenter_a_name} total FP: {len(result.a_false_positives)}")
     lines.append(f"{result.segmenter_b_name} total FP: {len(result.b_false_positives)}")
     lines.append(
-        f"{result.segmenter_a_name} only FP (B fixed): {len(result.a_only_false_positives)}"
+        f"{result.segmenter_a_name} only FP (B fixed): "
+        f"{len(result.a_only_false_positives)}"
     )
     lines.append(
-        f"{result.segmenter_b_name} only FP (B introduced): {len(result.b_only_false_positives)}"
+        f"{result.segmenter_b_name} only FP (B introduced): "
+        f"{len(result.b_only_false_positives)}"
     )
     lines.append("")
 
@@ -446,9 +505,10 @@ def format_report(result: ComparisonResult) -> str:
     # Detailed cases: B-only false positives (B introduced errors)
     if result.b_only_false_positives:
         lines.append(sep)
+        count = len(result.b_only_false_positives)
         lines.append(
             f"B INTRODUCED FALSE POSITIVES: "
-            f"{result.segmenter_b_name} only ({len(result.b_only_false_positives)} cases)"
+            f"{result.segmenter_b_name} only ({count} cases)"
         )
         lines.append(sep)
         lines.append(
@@ -464,9 +524,9 @@ def format_report(result: ComparisonResult) -> str:
     # Detailed cases: A-only false positives (B fixed errors)
     if result.a_only_false_positives:
         lines.append(sep)
+        count = len(result.a_only_false_positives)
         lines.append(
-            f"B FIXED FALSE POSITIVES: "
-            f"{result.segmenter_a_name} only ({len(result.a_only_false_positives)} cases)"
+            f"B FIXED FALSE POSITIVES: {result.segmenter_a_name} only ({count} cases)"
         )
         lines.append(sep)
         lines.append(
@@ -482,6 +542,73 @@ def format_report(result: ComparisonResult) -> str:
     return "\n".join(lines)
 
 
+def resolve_file_path(
+    segmenter: str,
+    lang: str,
+    model_size: str,
+    variant: str,
+    script_dir: Path,
+) -> Path:
+    """Resolve output file path for a segmenter.
+
+    Args:
+        segmenter: Segmenter name (spacy, phrasplit, sentencizer)
+        lang: Language code (en, de, etc.)
+        model_size: Model size (sm, md, lg)
+        variant: Test variant (all, none, mixed)
+        script_dir: Directory containing the script
+
+    Returns:
+        Path to the output file
+    """
+    # Sentencizer doesn't use model size
+    if segmenter == "sentencizer":
+        filename = f"UD_{lang}_{segmenter}.{variant}.out"
+    else:
+        filename = f"UD_{lang}_{segmenter}_{model_size}.{variant}.out"
+
+    return script_dir / "outfiles" / filename
+
+
+def resolve_gold_path(lang: str, script_dir: Path) -> Path:
+    """Resolve gold standard file path for a language.
+
+    Args:
+        lang: Language code (en, de, etc.)
+        script_dir: Directory containing the script
+
+    Returns:
+        Path to the gold file
+    """
+    lang_name = LANG_CODE_TO_NAME.get(lang)
+    if not lang_name:
+        raise ValueError(f"Unknown language code '{lang}'")
+
+    return script_dir / "testsets" / f"UD_{lang_name}.dataset.gold"
+
+
+def print_list_info() -> None:
+    """Print available options for --list flag."""
+    print("Available options:")
+    print()
+    print("Languages:")
+    langs = sorted(LANG_CODE_TO_NAME.keys())
+    print(f"  {', '.join(langs)}")
+    print()
+    print("Segmenters:")
+    print(f"  {', '.join(VALID_SEGMENTERS)}")
+    print()
+    print("Model sizes:")
+    print(f"  {', '.join(VALID_MODEL_SIZES)}")
+    print("  Note: 'sentencizer' does not use model size (rule-based)")
+    print()
+    print("Variants:")
+    print(f"  {', '.join(VALID_VARIANTS)}")
+    print("  - all: Same as gold (trivial test)")
+    print("  - none: All sentences on one line (hardest test)")
+    print("  - mixed: Paragraph-like (3-8 sentences per line)")
+
+
 def main() -> None:
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -491,27 +618,41 @@ def main() -> None:
     )
 
     parser.add_argument(
-        "gold",
+        "--list",
+        action="store_true",
+        help="List available languages, segmenters, model sizes, and variants",
+    )
+    parser.add_argument(
+        "lang",
         type=str,
-        help="Gold standard file (one sentence per line)",
+        nargs="?",
+        help="Language code (e.g., en, de, fr)",
     )
     parser.add_argument(
         "segmenter_a",
         type=str,
-        help="Output file from segmenter A",
+        nargs="?",
+        help=f"First segmenter: {', '.join(VALID_SEGMENTERS)}",
     )
     parser.add_argument(
         "segmenter_b",
         type=str,
-        help="Output file from segmenter B",
+        nargs="?",
+        help=f"Second segmenter: {', '.join(VALID_SEGMENTERS)}",
     )
     parser.add_argument(
-        "--names",
-        "-n",
-        nargs=2,
-        metavar=("A_NAME", "B_NAME"),
-        default=["Segmenter A", "Segmenter B"],
-        help="Names for the two segmenters (default: 'Segmenter A' 'Segmenter B')",
+        "--model-size",
+        "-m",
+        type=str,
+        choices=VALID_MODEL_SIZES,
+        help=f"Model size: {', '.join(VALID_MODEL_SIZES)} (required)",
+    )
+    parser.add_argument(
+        "--variant",
+        "-v",
+        type=str,
+        choices=VALID_VARIANTS,
+        help=f"Test variant: {', '.join(VALID_VARIANTS)} (required)",
     )
     parser.add_argument(
         "--output",
@@ -520,19 +661,136 @@ def main() -> None:
         metavar="FILE",
         help="Output file for the comparison report (default: print to stdout)",
     )
+    parser.add_argument(
+        "--gold",
+        type=str,
+        metavar="FILE",
+        help="Override gold standard file path (auto-detected by default)",
+    )
+    parser.add_argument(
+        "--file-a",
+        type=str,
+        metavar="FILE",
+        help="Override segmenter A output file path (auto-detected by default)",
+    )
+    parser.add_argument(
+        "--file-b",
+        type=str,
+        metavar="FILE",
+        help="Override segmenter B output file path (auto-detected by default)",
+    )
 
     args = parser.parse_args()
 
-    # Read files
+    # Handle --list flag
+    if args.list:
+        print_list_info()
+        sys.exit(0)
+
+    # Validate required positional arguments
+    if not args.lang:
+        parser.error("the following arguments are required: lang")
+    if not args.segmenter_a:
+        parser.error("the following arguments are required: segmenter_a")
+    if not args.segmenter_b:
+        parser.error("the following arguments are required: segmenter_b")
+
+    # Validate required options
+    if not args.model_size:
+        parser.error("the following arguments are required: --model-size/-m")
+    if not args.variant:
+        parser.error("the following arguments are required: --variant/-v")
+
+    # Validate language
+    if args.lang not in LANG_CODE_TO_NAME:
+        print(
+            f"Error: Unknown language code '{args.lang}'. "
+            f"Use --list to see available languages.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Validate segmenter names
+    for _name, seg in [
+        ("segmenter_a", args.segmenter_a),
+        ("segmenter_b", args.segmenter_b),
+    ]:
+        if seg not in VALID_SEGMENTERS:
+            print(
+                f"Error: Unknown segmenter '{seg}'. "
+                f"Valid options: {', '.join(VALID_SEGMENTERS)}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    # Get script directory for resolving paths
+    script_dir = Path(__file__).parent
+
+    # Resolve file paths
+    if args.gold:
+        gold_path = Path(args.gold)
+    else:
+        gold_path = resolve_gold_path(args.lang, script_dir)
+
+    if args.file_a:
+        file_a_path = Path(args.file_a)
+    else:
+        file_a_path = resolve_file_path(
+            args.segmenter_a, args.lang, args.model_size, args.variant, script_dir
+        )
+
+    if args.file_b:
+        file_b_path = Path(args.file_b)
+    else:
+        file_b_path = resolve_file_path(
+            args.segmenter_b, args.lang, args.model_size, args.variant, script_dir
+        )
+
+    # Read files with helpful error messages
     try:
-        with open(args.gold, encoding="utf-8") as f:
+        with open(gold_path, encoding="utf-8") as f:
             gold_text = f.read()
-        with open(args.segmenter_a, encoding="utf-8") as f:
+    except FileNotFoundError:
+        print(f"Error: Gold file not found: {gold_path}", file=sys.stderr)
+        print(
+            f"Hint: Run 'python build-testset.py --download {args.lang}' "
+            "first to download the dataset.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        with open(file_a_path, encoding="utf-8") as f:
             segmenter_a_text = f.read()
-        with open(args.segmenter_b, encoding="utf-8") as f:
+    except FileNotFoundError:
+        print(f"Error: Output file not found: {file_a_path}", file=sys.stderr)
+        seg_flag = (
+            f"--{args.segmenter_a}"
+            if args.segmenter_a != "sentencizer"
+            else "--sentencizer"
+        )
+        print(
+            f"Hint: Run 'python runbatcheval.py {args.lang} {seg_flag}' "
+            "first to generate this file.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        with open(file_b_path, encoding="utf-8") as f:
             segmenter_b_text = f.read()
-    except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
+    except FileNotFoundError:
+        print(f"Error: Output file not found: {file_b_path}", file=sys.stderr)
+        seg_flag = (
+            f"--{args.segmenter_b}"
+            if args.segmenter_b != "sentencizer"
+            else "--sentencizer"
+        )
+        print(
+            f"Hint: Run 'python runbatcheval.py {args.lang} {seg_flag}' "
+            "first to generate this file.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Compare
@@ -541,8 +799,8 @@ def main() -> None:
             gold_text,
             segmenter_a_text,
             segmenter_b_text,
-            segmenter_a_name=args.names[0],
-            segmenter_b_name=args.names[1],
+            segmenter_a_name=args.segmenter_a,
+            segmenter_b_name=args.segmenter_b,
         )
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -560,14 +818,14 @@ def main() -> None:
 
         # Also print summary to stdout
         print()
-        print(f"=== SUMMARY ===")
+        print("=== SUMMARY ===")
         print(f"Total gold boundaries: {result.total_boundaries}")
         print(f"Both correct: {result.both_correct}")
         print(f"Neither correct: {result.neither_correct}")
-        print(f"{args.names[0]} only (B regression): {result.a_only_correct}")
-        print(f"{args.names[1]} only (B improvement): {result.b_only_correct}")
-        print(f"{args.names[0]} false positives: {len(result.a_false_positives)}")
-        print(f"{args.names[1]} false positives: {len(result.b_false_positives)}")
+        print(f"{args.segmenter_a} only (B regression): {result.a_only_correct}")
+        print(f"{args.segmenter_b} only (B improvement): {result.b_only_correct}")
+        print(f"{args.segmenter_a} false positives: {len(result.a_false_positives)}")
+        print(f"{args.segmenter_b} false positives: {len(result.b_false_positives)}")
     else:
         print(report)
 

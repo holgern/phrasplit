@@ -270,17 +270,45 @@ python cleanup.py
 Compares two segmenters against a gold standard to find where they differ. Useful for
 understanding what one segmenter fixes or breaks compared to another.
 
-```bash
-# Compare spaCy vs phrasplit
-python compare_segmenters.py testsets/UD_English.dataset.gold \
-    outfiles/UD_en_spacy_lg.all.out \
-    outfiles/UD_en_phrasplit_lg.all.out \
-    --names spacy phrasplit \
-    -o outfiles/comparison_report.txt
+The script automatically finds files based on language code, segmenter names, model
+size, and test variant.
 
-# Compare any two segmenters
-python compare_segmenters.py gold.txt segmenter_a.out segmenter_b.out
+```bash
+# List available options (languages, segmenters, model sizes, variants)
+python compare_segmenters.py --list
+
+# Compare spaCy vs phrasplit on English with lg model, all variant
+python compare_segmenters.py en spacy phrasplit -m lg -v all
+
+# Compare on the hardest test (none variant = all sentences on one line)
+python compare_segmenters.py en spacy phrasplit -m lg -v none
+
+# Save output to file
+python compare_segmenters.py en spacy phrasplit -m lg -v all -o comparison.txt
+
+# Compare sentencizer vs phrasplit
+python compare_segmenters.py en sentencizer phrasplit -m sm -v all
+
+# Override auto-detected file paths (for custom files)
+python compare_segmenters.py en spacy phrasplit -m lg -v all \
+    --file-a custom_a.out --file-b custom_b.out --gold custom.gold
 ```
+
+**Required arguments:**
+
+- `lang` - Language code (e.g., `en`, `de`, `fr`)
+- `segmenter_a` - First segmenter (`spacy`, `phrasplit`, `sentencizer`)
+- `segmenter_b` - Second segmenter
+- `-m/--model-size` - Model size (`sm`, `md`, `lg`)
+- `-v/--variant` - Test variant (`all`, `none`, `mixed`)
+
+**File path resolution:**
+
+The script automatically constructs file paths:
+
+- Gold: `testsets/UD_{Language}.dataset.gold` (e.g., `UD_English.dataset.gold`)
+- Output: `outfiles/UD_{lang}_{segmenter}_{size}.{variant}.out`
+- Sentencizer (no model): `outfiles/UD_{lang}_sentencizer.{variant}.out`
 
 Output includes:
 
