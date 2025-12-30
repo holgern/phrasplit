@@ -34,6 +34,22 @@ Example with abbreviations:
    sentences = split_sentences(text)
    # ['Mr. Brown met Prof. Green.', 'They discussed the U.S.A. case.']
 
+Colon Splitting
+^^^^^^^^^^^^^^^
+
+By default, colons are treated as sentence terminators. This is useful for
+news-style text:
+
+.. code-block:: python
+
+   text = "Breaking News: The event has started."
+   sentences = split_sentences(text)
+   # ['Breaking News:', 'The event has started.']
+
+   # Disable colon splitting if needed
+   sentences = split_sentences(text, split_on_colon=False)
+   # ['Breaking News: The event has started.']
+
 Splitting Clauses
 -----------------
 
@@ -86,6 +102,67 @@ The function handles multiple blank lines and whitespace-only lines:
    text = "First.\n\n\n\nSecond."  # Multiple blank lines
    paragraphs = split_paragraphs(text)
    # ['First.', 'Second.']
+
+Hierarchical Splitting with split_text
+--------------------------------------
+
+The :func:`~phrasplit.split_text` function provides a unified interface for
+splitting text while preserving paragraph and sentence structure. This is
+particularly useful for audiobook generation where you need different pause
+lengths between paragraphs, sentences, and clauses.
+
+.. code-block:: python
+
+   from phrasplit import split_text, Segment
+
+   text = "First sentence. Second sentence.\n\nNew paragraph here."
+   segments = split_text(text, mode="sentence")
+
+   for seg in segments:
+       print(f"Paragraph {seg.paragraph}, Sentence {seg.sentence}: {seg.text}")
+   # Paragraph 0, Sentence 0: First sentence.
+   # Paragraph 0, Sentence 1: Second sentence.
+   # Paragraph 1, Sentence 0: New paragraph here.
+
+Available Modes
+^^^^^^^^^^^^^^^
+
+- ``"paragraph"``: Returns paragraphs only (``sentence`` is None)
+- ``"sentence"``: Returns sentences with paragraph tracking
+- ``"clause"``: Returns clauses with paragraph and sentence tracking
+
+.. code-block:: python
+
+   # Paragraph mode
+   segments = split_text(text, mode="paragraph")
+   # Each segment has sentence=None
+
+   # Sentence mode (default)
+   segments = split_text(text, mode="sentence")
+   # Each segment has paragraph and sentence indices
+
+   # Clause mode - finest granularity
+   text = "Hello, world. Goodbye, friend."
+   segments = split_text(text, mode="clause")
+   # Returns: Hello, | world. | Goodbye, | friend.
+   # All with paragraph and sentence tracking
+
+Detecting Structure Changes
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Use the ``Segment`` fields to detect when paragraphs or sentences change:
+
+.. code-block:: python
+
+   from phrasplit import split_text
+
+   text = "Sent 1. Sent 2.\n\nSent 3."
+   segments = split_text(text, mode="sentence")
+
+   for i, seg in enumerate(segments):
+       if i > 0 and seg.paragraph != segments[i-1].paragraph:
+           print("--- New Paragraph ---")
+       print(seg.text)
 
 Splitting Long Lines
 --------------------
@@ -162,3 +239,22 @@ Here's a complete example of processing a document:
    Second paragraph with more content, and some clauses."""
 
    structure = process_document(text)
+
+Simplified Pipeline with split_text
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The same can be achieved more simply with :func:`~phrasplit.split_text`:
+
+.. code-block:: python
+
+   from phrasplit import split_text
+
+   text = """Hello world, this is a test. Another sentence here.
+
+   Second paragraph with more content, and some clauses."""
+
+   # Get all clauses with full structure information
+   segments = split_text(text, mode="clause")
+
+   for seg in segments:
+       print(f"P{seg.paragraph} S{seg.sentence}: {seg.text}")

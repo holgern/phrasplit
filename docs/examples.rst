@@ -33,6 +33,111 @@ Split text at natural pause points for text-to-speech processing:
        print(part)
        # Each part can be sent to TTS with appropriate pauses between them
 
+Audiobook with Paragraph Awareness
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For more control over pause lengths, use :func:`~phrasplit.split_text` to track
+paragraph and sentence boundaries:
+
+.. code-block:: python
+
+   from phrasplit import split_text
+
+   def create_audiobook_segments(text, mode="sentence"):
+       """
+       Create audiobook segments with pause markers.
+
+       Args:
+           text: The text to process
+           mode: "sentence" or "clause" for granularity
+
+       Returns:
+           List of (text, pause_type) tuples
+       """
+       segments = split_text(text, mode=mode)
+       result = []
+
+       for i, seg in enumerate(segments):
+           if not seg.text.strip():
+               continue
+
+           # Determine pause type based on structure change
+           if i == 0:
+               pause_type = "none"
+           elif seg.paragraph != segments[i-1].paragraph:
+               pause_type = "paragraph"  # Long pause (e.g., 1.0s)
+           elif seg.sentence != segments[i-1].sentence:
+               pause_type = "sentence"   # Medium pause (e.g., 0.5s)
+           else:
+               pause_type = "clause"     # Short pause (e.g., 0.2s)
+
+           result.append((seg.text, pause_type))
+
+       return result
+
+   text = """
+   The adventure begins here. Our hero sets out on a journey.
+
+   Many challenges lay ahead. But courage would see them through.
+   """
+
+   segments = create_audiobook_segments(text, mode="clause")
+   for text, pause in segments:
+       print(f"[{pause:>10}] {text}")
+
+   # Output:
+   # [      none] The adventure begins here.
+   # [  sentence] Our hero sets out on a journey.
+   # [ paragraph] Many challenges lay ahead.
+   # [  sentence] But courage would see them through.
+
+Complete Audiobook Processor
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A full example integrating with a TTS system:
+
+.. code-block:: python
+
+   from phrasplit import split_text, Segment
+
+   class AudiobookProcessor:
+       """Process text for audiobook generation."""
+
+       PAUSE_DURATIONS = {
+           "paragraph": 1.0,
+           "sentence": 0.5,
+           "clause": 0.2,
+       }
+
+       def __init__(self, tts_engine):
+           self.tts = tts_engine
+
+       def process_chapter(self, text, mode="sentence"):
+           """Process a chapter into audio segments."""
+           segments = split_text(text, mode=mode)
+           segments = [s for s in segments if s.text.strip()]
+
+           audio_segments = []
+
+           for i, seg in enumerate(segments):
+               # Generate audio for text
+               audio = self.tts.synthesize(seg.text)
+               audio_segments.append(audio)
+
+               # Add appropriate pause
+               if i < len(segments) - 1:
+                   next_seg = segments[i + 1]
+                   if next_seg.paragraph != seg.paragraph:
+                       pause = self.PAUSE_DURATIONS["paragraph"]
+                   elif next_seg.sentence != seg.sentence:
+                       pause = self.PAUSE_DURATIONS["sentence"]
+                   else:
+                       pause = self.PAUSE_DURATIONS["clause"]
+
+                   audio_segments.append(self.tts.silence(pause))
+
+           return self.tts.concatenate(audio_segments)
+
 Subtitle Generation
 -------------------
 
@@ -229,7 +334,7 @@ Process text data in DataFrames:
 .. code-block:: python
 
    import pandas as pd
-   from phrasplit import split_sentences, split_clauses
+   from phrasplit import split_sentences, split_clauses, split_text
 
    # Sample data
    data = {
@@ -254,3 +359,37 @@ Process text data in DataFrames:
    ).explode("sentence")
 
    print(df_sentences)
+
+Using split_text with pandas
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For more detailed analysis with structure information:
+
+.. code-block:: python
+
+   import pandas as pd
+   from phrasplit import split_text
+
+   text = """First paragraph sentence one. Sentence two.
+
+   Second paragraph here. Another sentence."""
+
+   # Convert segments to DataFrame
+   segments = split_text(text, mode="sentence")
+   df = pd.DataFrame([
+       {"text": s.text, "paragraph": s.paragraph, "sentence": s.sentence}
+       for s in segments
+   ])
+
+   print(df)
+   #                        text  paragraph  sentence
+   # 0  First paragraph sentence one.          0         0
+   # 1               Sentence two.          0         1
+   # 2      Second paragraph here.          1         0
+   # 3          Another sentence.          1         1
+
+   # Group by paragraph
+   for para_id, group in df.groupby("paragraph"):
+       print(f"\nParagraph {para_id}:")
+       for _, row in group.iterrows():
+           print(f"  S{row['sentence']}: {row['text']}")

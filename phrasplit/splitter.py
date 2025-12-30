@@ -3,9 +3,25 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from phrasplit.abbreviations import get_abbreviations, get_sentence_starters
+
+
+class Segment(NamedTuple):
+    """A text segment with position information.
+
+    Attributes:
+        text: The text content of the segment
+        paragraph: Paragraph index (0-based) within the document
+        sentence: Sentence index (0-based) within the paragraph.
+            None for paragraph mode.
+    """
+
+    text: str
+    paragraph: int
+    sentence: int | None = None
+
 
 if TYPE_CHECKING:
     from spacy.language import Language  # type: ignore[import-not-found]
@@ -167,6 +183,74 @@ def _restore_ellipsis(text: str) -> str:
     return text
 
 
+def _split_on_colons(sentences: list[str]) -> list[str]:
+    """
+    Split sentences at colons.
+
+    This splits each sentence at colon boundaries, treating the colon
+    as a sentence terminator. The colon stays with the text before it.
+
+    Preserves URLs by not splitting on http: or https:.
+
+    Args:
+        sentences: List of sentences
+
+    Returns:
+        List of sentences split at colons
+    """
+    result: list[str] = []
+
+    for sent in sentences:
+        # Skip if no colon
+        if ":" not in sent:
+            result.append(sent)
+            continue
+
+        # Protect URLs by replacing them with placeholders
+        url_placeholders: list[str] = []
+        protected = sent
+
+        # Find and replace URLs with placeholders
+        for match in _URL_PATTERN.finditer(sent):
+            url = match.group(0)
+            placeholder = f"\ue0f0{len(url_placeholders)}\ue0f1"
+            url_placeholders.append(url)
+            protected = protected.replace(url, placeholder, 1)
+
+        # Also protect common URL schemes that might not be full URLs yet
+        protected = protected.replace("https:", "\ue0f2HTTPS\ue0f3")
+        protected = protected.replace("http:", "\ue0f2HTTP\ue0f3")
+
+        # Now split on remaining colons
+        if ":" not in protected:
+            # No colons left after URL protection
+            result.append(sent)
+            continue
+
+        parts = protected.split(":")
+        for i, part in enumerate(parts):
+            part = part.strip()
+            if not part:
+                continue
+
+            # Add colon back to all parts except the last
+            if i < len(parts) - 1:
+                part = part + ":"
+
+            # Restore URL scheme placeholders
+            part = part.replace("\ue0f2HTTPS\ue0f3", "https:")
+            part = part.replace("\ue0f2HTTP\ue0f3", "http:")
+
+            # Restore URL placeholders
+            for j, url in enumerate(url_placeholders):
+                placeholder = f"\ue0f0{j}\ue0f1"
+                part = part.replace(placeholder, url)
+
+            result.append(part)
+
+    return result
+
+
 def _split_urls(sentences: list[str]) -> list[str]:
     """
     Split sentences that contain multiple URLs.
@@ -308,23 +392,30 @@ def _merge_abbreviation_splits(
 def _apply_corrections(
     sentences: list[str],
     language_model: str = "en_core_web_sm",
+    split_on_colon: bool = True,
 ) -> list[str]:
     """
     Apply post-processing corrections to fix common spaCy segmentation errors.
 
     Corrections applied (in order):
     1. Merge sentences incorrectly split after abbreviations (reduces count)
-    2. Split sentences containing multiple URLs (increases count)
+    2. Split sentences at colons (if enabled)
+    3. Split sentences containing multiple URLs (increases count)
 
     Args:
         sentences: List of sentences from spaCy
         language_model: spaCy language model name (for language-specific corrections)
+        split_on_colon: Whether to split sentences at colons
 
     Returns:
         Corrected list of sentences
     """
-    # First merge abbreviation splits (need to combine before URL split)
+    # First merge abbreviation splits (need to combine before other splits)
     sentences = _merge_abbreviation_splits(sentences, language_model)
+
+    # Split on colons if enabled
+    if split_on_colon:
+        sentences = _split_on_colons(sentences)
 
     # Then split URLs (increases sentence count)
     sentences = _split_urls(sentences)
@@ -385,6 +476,7 @@ def split_sentences(
     text: str,
     language_model: str = "en_core_web_sm",
     apply_corrections: bool = True,
+    split_on_colon: bool = True,
 ) -> list[str]:
     """
     Split text into sentences using spaCy.
@@ -395,6 +487,8 @@ def split_sentences(
         apply_corrections: Whether to apply post-processing corrections for
             common spaCy errors (URL splitting, abbreviation handling).
             Default is True.
+        split_on_colon: Whether to split sentences at colons. This treats
+            colons as sentence terminators. Default is True.
 
     Returns:
         List of sentences
@@ -421,7 +515,7 @@ def split_sentences(
 
     # Apply post-processing corrections if enabled
     if apply_corrections:
-        result = _apply_corrections(result, language_model)
+        result = _apply_corrections(result, language_model, split_on_colon)
 
     return result
 
@@ -662,5 +756,107 @@ def split_long_lines(
         # Split the long line
         split_lines = _split_at_boundaries(line, max_length, nlp)
         result.extend(split_lines)
+
+    return result
+
+
+def split_text(
+    text: str,
+    mode: str = "sentence",
+    language_model: str = "en_core_web_sm",
+    apply_corrections: bool = True,
+    split_on_colon: bool = True,
+) -> list[Segment]:
+    """
+    Split text into segments with hierarchical position information.
+
+    This function provides a unified interface for text splitting with different
+    granularity levels, while preserving paragraph and sentence structure information.
+    Useful for audiobook generation where different pause lengths are needed
+    between paragraphs vs. sentences vs. clauses.
+
+    Args:
+        text: Input text to split
+        mode: Splitting mode - one of:
+            - "paragraph": Split into paragraphs only
+            - "sentence": Split into sentences, grouped by paragraph
+            - "clause": Split into clauses (comma-separated), with paragraph
+              and sentence info
+        language_model: spaCy language model to use (for sentence/clause modes)
+        apply_corrections: Whether to apply post-processing corrections for
+            common spaCy errors (URL splitting, abbreviation handling).
+            Default is True. Only applies to sentence/clause modes.
+        split_on_colon: Whether to split sentences at colons. Default is True.
+            Only applies to sentence/clause modes.
+
+    Returns:
+        List of Segment namedtuples, each containing:
+            - text: The segment text
+            - paragraph: Paragraph index (0-based)
+            - sentence: Sentence index within paragraph (0-based).
+              None for paragraph mode.
+
+    Raises:
+        ValueError: If mode is not one of "paragraph", "sentence", "clause"
+
+    Example:
+        >>> segments = split_text("Hello world. How are you?\\n\\nNew paragraph.")
+        >>> for seg in segments:
+        ...     print(f"P{seg.paragraph} S{seg.sentence}: {seg.text}")
+        P0 S0: Hello world.
+        P0 S1: How are you?
+        P1 S0: New paragraph.
+
+        >>> # Detect paragraph changes for longer pauses
+        >>> for i, seg in enumerate(segments):
+        ...     if i > 0 and seg.paragraph != segments[i-1].paragraph:
+        ...         print("--- paragraph break ---")
+        ...     print(seg.text)
+    """
+    valid_modes = ("paragraph", "sentence", "clause")
+    if mode not in valid_modes:
+        raise ValueError(f"mode must be one of {valid_modes}, got {mode!r}")
+
+    paragraphs = split_paragraphs(text)
+
+    if not paragraphs:
+        return []
+
+    result: list[Segment] = []
+
+    if mode == "paragraph":
+        for para_idx, para in enumerate(paragraphs):
+            result.append(Segment(text=para, paragraph=para_idx, sentence=None))
+        return result
+
+    # For sentence and clause modes, we need spaCy
+    nlp = _get_nlp(language_model)
+
+    for para_idx, para in enumerate(paragraphs):
+        # Protect ellipsis from being treated as sentence boundaries
+        protected_para = _protect_ellipsis(para)
+
+        # Process paragraph into sentences
+        doc = nlp(protected_para)
+        sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
+
+        # Restore ellipsis in sentences
+        sentences = [_restore_ellipsis(sent) for sent in sentences]
+
+        # Apply post-processing corrections if enabled
+        if apply_corrections:
+            sentences = _apply_corrections(sentences, language_model, split_on_colon)
+
+        if mode == "sentence":
+            for sent_idx, sent in enumerate(sentences):
+                result.append(Segment(text=sent, paragraph=para_idx, sentence=sent_idx))
+
+        elif mode == "clause":
+            for sent_idx, sent in enumerate(sentences):
+                clauses = _split_sentence_into_clauses(sent)
+                for clause in clauses:
+                    result.append(
+                        Segment(text=clause, paragraph=para_idx, sentence=sent_idx)
+                    )
 
     return result

@@ -13,6 +13,7 @@ NLP. Designed for audiobook creation and text-to-speech processing.
 - **Sentence splitting**: Intelligent sentence boundary detection using spaCy
 - **Clause splitting**: Split sentences at commas for natural pause points
 - **Paragraph splitting**: Split text at double newlines
+- **Hierarchical splitting**: Split text with paragraph/sentence position tracking
 - **Long line splitting**: Break long lines at sentence/clause boundaries
 - **Abbreviation handling**: Correctly handles Mr., Dr., U.S.A., etc.
 - **Ellipsis support**: Preserves ellipses without incorrect splitting
@@ -56,6 +57,37 @@ text = "This is a very long sentence that needs to be split."
 lines = split_long_lines(text, max_length=30)
 ```
 
+### Hierarchical Splitting with Position Tracking
+
+For audiobook generation where you need different pause lengths between paragraphs,
+sentences, and clauses, use `split_text()`:
+
+```python
+from phrasplit import split_text, Segment
+
+# Split into sentences with paragraph tracking
+text = "First sentence. Second sentence.\n\nNew paragraph here."
+segments = split_text(text, mode="sentence")
+
+for seg in segments:
+    print(f"P{seg.paragraph} S{seg.sentence}: {seg.text}")
+# P0 S0: First sentence.
+# P0 S1: Second sentence.
+# P1 S0: New paragraph here.
+
+# Detect paragraph changes for longer pauses
+for i, seg in enumerate(segments):
+    if i > 0 and seg.paragraph != segments[i-1].paragraph:
+        print("--- paragraph break (add longer pause) ---")
+    print(seg.text)
+```
+
+Available modes:
+
+- `"paragraph"`: Returns paragraphs (sentence=None)
+- `"sentence"`: Returns sentences with paragraph index
+- `"clause"`: Returns clauses with paragraph and sentence indices
+
 ### Command Line Interface
 
 ```bash
@@ -84,7 +116,7 @@ phrasplit sentences - < input.txt
 
 ## API Reference
 
-### `split_sentences(text, language_model="en_core_web_sm")`
+### `split_sentences(text, language_model="en_core_web_sm", apply_corrections=True, split_on_colon=True)`
 
 Split text into sentences using spaCy's sentence boundary detection.
 
@@ -92,6 +124,9 @@ Split text into sentences using spaCy's sentence boundary detection.
 
 - `text`: Input text string
 - `language_model`: spaCy model to use (default: "en_core_web_sm")
+- `apply_corrections`: Apply post-processing corrections for URLs and abbreviations
+  (default: True)
+- `split_on_colon`: Treat colons as sentence terminators (default: True)
 
 **Returns:** List of sentences
 
@@ -117,6 +152,24 @@ Split text into paragraphs at double newlines.
 
 **Returns:** List of paragraphs
 
+### `split_text(text, mode="sentence", language_model="en_core_web_sm", apply_corrections=True, split_on_colon=True)`
+
+Split text into segments with hierarchical position information.
+
+**Parameters:**
+
+- `text`: Input text string
+- `mode`: Splitting mode - "paragraph", "sentence", or "clause"
+- `language_model`: spaCy model to use (default: "en_core_web_sm")
+- `apply_corrections`: Apply post-processing corrections (default: True)
+- `split_on_colon`: Treat colons as sentence terminators (default: True)
+
+**Returns:** List of `Segment` namedtuples with fields:
+
+- `text`: The segment text
+- `paragraph`: Paragraph index (0-based)
+- `sentence`: Sentence index within paragraph (0-based), None for paragraph mode
+
 ### `split_long_lines(text, max_length, language_model="en_core_web_sm")`
 
 Split lines exceeding max_length at sentence/clause boundaries.
@@ -135,14 +188,28 @@ Split lines exceeding max_length at sentence/clause boundaries.
 
 ### Audiobook Creation
 
-Split text at commas to create natural pause points for text-to-speech:
+Split text with paragraph awareness for different pause lengths:
 
 ```python
-from phrasplit import split_clauses
+from phrasplit import split_text
 
-text = "When the sun rose, the birds began to sing, and the day started."
-parts = split_clauses(text)
-# ['When the sun rose,', 'the birds began to sing,', 'and the day started.']
+text = """When the sun rose, the birds began to sing.
+
+A new day had started. The adventure continues."""
+
+segments = split_text(text, mode="clause")
+
+for i, seg in enumerate(segments):
+    # Add longer pause between paragraphs
+    if i > 0 and seg.paragraph != segments[i-1].paragraph:
+        add_pause(duration=1.0)  # Long pause for paragraph
+    # Add medium pause between sentences
+    elif i > 0 and seg.sentence != segments[i-1].sentence:
+        add_pause(duration=0.5)  # Medium pause for sentence
+    else:
+        add_pause(duration=0.2)  # Short pause for clause
+
+    synthesize_speech(seg.text)
 ```
 
 ### Subtitle Generation

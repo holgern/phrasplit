@@ -2,7 +2,14 @@
 
 import pytest
 
-from phrasplit import split_clauses, split_long_lines, split_paragraphs, split_sentences
+from phrasplit import (
+    Segment,
+    split_clauses,
+    split_long_lines,
+    split_paragraphs,
+    split_sentences,
+    split_text,
+)
 from phrasplit.splitter import (
     _apply_corrections,
     _fix_hyphenated_linebreaks,
@@ -13,6 +20,7 @@ from phrasplit.splitter import (
     _protect_ellipsis,
     _restore_ellipsis,
     _split_at_clauses,
+    _split_on_colons,
     _split_sentence_into_clauses,
     _split_urls,
 )
@@ -1013,6 +1021,131 @@ class TestSentenceSplittingEdgeCases:
         assert len(result) == 2
 
 
+class TestSplitOnColons:
+    """Tests for _split_on_colons post-processing function."""
+
+    def test_no_colons(self) -> None:
+        """Test sentences without colons are unchanged."""
+        sentences = ["This is a normal sentence.", "Another sentence here."]
+        result = _split_on_colons(sentences)
+        assert result == sentences
+
+    def test_single_colon_splits(self) -> None:
+        """Test sentence with colon is split."""
+        sentences = ["Note: This is important."]
+        result = _split_on_colons(sentences)
+        assert len(result) == 2
+        assert result[0] == "Note:"
+        assert result[1] == "This is important."
+
+    def test_news_source_pattern(self) -> None:
+        """Test news source pattern like 'Al-Zaman : content'."""
+        sentences = ["Al-Zaman : American forces killed someone."]
+        result = _split_on_colons(sentences)
+        assert len(result) == 2
+        assert result[0] == "Al-Zaman:"
+        assert result[1] == "American forces killed someone."
+
+    def test_multiple_colons(self) -> None:
+        """Test sentence with multiple colons."""
+        sentences = ["A: B: C"]
+        result = _split_on_colons(sentences)
+        assert len(result) == 3
+        assert result[0] == "A:"
+        assert result[1] == "B:"
+        assert result[2] == "C"
+
+    def test_colon_at_end(self) -> None:
+        """Test sentence ending with colon."""
+        sentences = ["Items:"]
+        result = _split_on_colons(sentences)
+        assert len(result) == 1
+        assert result[0] == "Items:"
+
+    def test_empty_list(self) -> None:
+        """Test empty list returns empty list."""
+        result = _split_on_colons([])
+        assert result == []
+
+    def test_multiple_sentences_mixed(self) -> None:
+        """Test multiple sentences, some with colons, some without."""
+        sentences = [
+            "Normal sentence.",
+            "Note: Important info.",
+            "Another normal one.",
+        ]
+        result = _split_on_colons(sentences)
+        assert len(result) == 4
+        assert result[0] == "Normal sentence."
+        assert result[1] == "Note:"
+        assert result[2] == "Important info."
+        assert result[3] == "Another normal one."
+
+    def test_url_not_split(self) -> None:
+        """Test that URLs with colons are not split."""
+        sentences = ["Visit https://example.com for more info."]
+        result = _split_on_colons(sentences)
+        assert len(result) == 1
+        assert "https://example.com" in result[0]
+
+    def test_http_url_not_split(self) -> None:
+        """Test that http:// URLs are not split."""
+        sentences = ["Visit http://example.com for more info."]
+        result = _split_on_colons(sentences)
+        assert len(result) == 1
+        assert "http://example.com" in result[0]
+
+    def test_multiple_urls_not_split(self) -> None:
+        """Test that multiple URLs are preserved."""
+        sentences = ["Check https://a.com and https://b.com here."]
+        result = _split_on_colons(sentences)
+        assert len(result) == 1
+        assert "https://a.com" in result[0]
+        assert "https://b.com" in result[0]
+
+    def test_colon_with_url(self) -> None:
+        """Test colon splitting with URL in same sentence."""
+        sentences = ["DPA: See https://news.com for details."]
+        result = _split_on_colons(sentences)
+        assert len(result) == 2
+        assert result[0] == "DPA:"
+        assert "https://news.com" in result[1]
+
+
+class TestSplitSentencesColonOption:
+    """Tests for split_sentences with split_on_colon parameter."""
+
+    def test_colon_split_enabled_by_default(self) -> None:
+        """Test that colon splitting is enabled by default."""
+        text = "Note: This is important."
+        result = split_sentences(text)
+        assert len(result) == 2
+        assert result[0] == "Note:"
+        assert result[1] == "This is important."
+
+    def test_colon_split_disabled(self) -> None:
+        """Test that colon splitting can be disabled."""
+        text = "Note: This is important."
+        result = split_sentences(text, split_on_colon=False)
+        assert len(result) == 1
+        assert "Note:" in result[0]
+
+    def test_news_source_split(self) -> None:
+        """Test news source pattern is split."""
+        text = "DPA: Iraqi authorities announced something."
+        result = split_sentences(text)
+        assert len(result) == 2
+        assert result[0] == "DPA:"
+
+    def test_multiple_colons_in_text(self) -> None:
+        """Test text with multiple colons."""
+        text = "Warning: Do not proceed. Note: This is final."
+        result = split_sentences(text)
+        # Should split at sentence boundaries AND colons
+        assert any("Warning:" in s for s in result)
+        assert any("Note:" in s for s in result)
+
+
 class TestSplitUrls:
     """Tests for _split_urls post-processing function."""
 
@@ -1224,7 +1357,7 @@ class TestSplitSentencesWithCorrections:
     def test_corrections_enabled_by_default(self) -> None:
         """Test that corrections are enabled by default."""
         # Multiple URLs should be split
-        text = "Resources: https://a.com https://b.com for info."
+        text = "Check https://a.com https://b.com for info."
         result = split_sentences(text)
         # spaCy returns one sentence, then URL split makes it 2
         assert len(result) == 2
@@ -1436,3 +1569,202 @@ class TestLanguageSpecificAbbreviations:
         result_sm = _merge_abbreviation_splits(sentences, "en_core_web_sm")
         result_lg = _merge_abbreviation_splits(sentences.copy(), "en_core_web_lg")
         assert result_sm == result_lg
+
+
+class TestSplitText:
+    """Tests for split_text function with Segment namedtuples."""
+
+    def test_invalid_mode_raises_error(self) -> None:
+        """Test that invalid mode raises ValueError."""
+        with pytest.raises(ValueError, match="mode must be one of"):
+            split_text("Hello world.", mode="invalid")
+
+    def test_empty_text_returns_empty_list(self) -> None:
+        """Test that empty text returns empty list."""
+        assert split_text("") == []
+        assert split_text("   ") == []
+
+    def test_paragraph_mode_basic(self) -> None:
+        """Test paragraph mode returns paragraphs with correct indices."""
+        text = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph."
+        result = split_text(text, mode="paragraph")
+
+        assert len(result) == 3
+        assert all(isinstance(seg, Segment) for seg in result)
+
+        assert result[0].text == "First paragraph."
+        assert result[0].paragraph == 0
+        assert result[0].sentence is None
+
+        assert result[1].text == "Second paragraph."
+        assert result[1].paragraph == 1
+        assert result[1].sentence is None
+
+        assert result[2].text == "Third paragraph."
+        assert result[2].paragraph == 2
+        assert result[2].sentence is None
+
+    def test_sentence_mode_single_paragraph(self) -> None:
+        """Test sentence mode with single paragraph."""
+        text = "First sentence. Second sentence. Third sentence."
+        result = split_text(text, mode="sentence")
+
+        assert len(result) == 3
+        assert all(seg.paragraph == 0 for seg in result)
+
+        assert result[0].text == "First sentence."
+        assert result[0].sentence == 0
+
+        assert result[1].text == "Second sentence."
+        assert result[1].sentence == 1
+
+        assert result[2].text == "Third sentence."
+        assert result[2].sentence == 2
+
+    def test_sentence_mode_multiple_paragraphs(self) -> None:
+        """Test sentence mode with multiple paragraphs."""
+        text = "Para one sent one. Para one sent two.\n\nPara two sent one."
+        result = split_text(text, mode="sentence")
+
+        assert len(result) == 3
+
+        # First paragraph sentences
+        assert result[0].paragraph == 0
+        assert result[0].sentence == 0
+        assert result[1].paragraph == 0
+        assert result[1].sentence == 1
+
+        # Second paragraph sentence (sentence index resets)
+        assert result[2].paragraph == 1
+        assert result[2].sentence == 0
+
+    def test_clause_mode_basic(self) -> None:
+        """Test clause mode splits at commas."""
+        text = "Hello world, how are you, I am fine."
+        result = split_text(text, mode="clause")
+
+        assert len(result) == 3
+        assert result[0].text == "Hello world,"
+        assert result[1].text == "how are you,"
+        assert result[2].text == "I am fine."
+
+        # All from same paragraph and sentence
+        assert all(seg.paragraph == 0 for seg in result)
+        assert all(seg.sentence == 0 for seg in result)
+
+    def test_clause_mode_multiple_sentences(self) -> None:
+        """Test clause mode with multiple sentences."""
+        text = "First, second. Third, fourth."
+        result = split_text(text, mode="clause")
+
+        assert len(result) == 4
+
+        # First sentence clauses
+        assert result[0].text == "First,"
+        assert result[0].sentence == 0
+        assert result[1].text == "second."
+        assert result[1].sentence == 0
+
+        # Second sentence clauses
+        assert result[2].text == "Third,"
+        assert result[2].sentence == 1
+        assert result[3].text == "fourth."
+        assert result[3].sentence == 1
+
+    def test_clause_mode_multiple_paragraphs(self) -> None:
+        """Test clause mode with multiple paragraphs."""
+        text = "Hello, world.\n\nGoodbye, friend."
+        result = split_text(text, mode="clause")
+
+        assert len(result) == 4
+
+        # First paragraph
+        assert result[0].paragraph == 0
+        assert result[0].sentence == 0
+        assert result[1].paragraph == 0
+        assert result[1].sentence == 0
+
+        # Second paragraph (sentence index resets)
+        assert result[2].paragraph == 1
+        assert result[2].sentence == 0
+        assert result[3].paragraph == 1
+        assert result[3].sentence == 0
+
+    def test_segment_namedtuple_access(self) -> None:
+        """Test that Segment fields can be accessed by name and index."""
+        text = "Hello world."
+        result = split_text(text, mode="sentence")
+
+        seg = result[0]
+
+        # Access by name
+        assert seg.text == "Hello world."
+        assert seg.paragraph == 0
+        assert seg.sentence == 0
+
+        # Access by index
+        assert seg[0] == "Hello world."
+        assert seg[1] == 0
+        assert seg[2] == 0
+
+    def test_paragraph_change_detection(self) -> None:
+        """Test detecting paragraph changes for audiobook pauses."""
+        text = "Sent 1. Sent 2.\n\nSent 3.\n\nSent 4. Sent 5."
+        result = split_text(text, mode="sentence")
+
+        # Simulate detecting paragraph changes
+        paragraph_changes = []
+        for i, seg in enumerate(result):
+            if i > 0 and seg.paragraph != result[i - 1].paragraph:
+                paragraph_changes.append(i)
+
+        # Should detect changes at index 2 (start of para 1) and 3 (start of para 2)
+        assert paragraph_changes == [2, 3]
+
+    def test_sentence_mode_with_colon_splitting(self) -> None:
+        """Test sentence mode respects split_on_colon parameter."""
+        text = "Note: This is important."
+
+        # With colon splitting (default)
+        result_split = split_text(text, mode="sentence", split_on_colon=True)
+        assert len(result_split) == 2
+        assert result_split[0].text == "Note:"
+        assert result_split[1].text == "This is important."
+
+        # Without colon splitting
+        result_no_split = split_text(text, mode="sentence", split_on_colon=False)
+        assert len(result_no_split) == 1
+
+    def test_sentence_mode_with_corrections(self) -> None:
+        """Test sentence mode respects apply_corrections parameter."""
+        text = "Visit https://a.com https://b.com for info."
+
+        # With corrections (default) - URLs should be split
+        result_corrected = split_text(text, mode="sentence", apply_corrections=True)
+        assert len(result_corrected) == 2
+
+        # Without corrections
+        result_uncorrected = split_text(text, mode="sentence", apply_corrections=False)
+        assert len(result_uncorrected) == 1
+
+    def test_flat_iteration(self) -> None:
+        """Test that result can be easily iterated as flat list."""
+        text = "Para 1 sent 1. Para 1 sent 2.\n\nPara 2 sent 1."
+        result = split_text(text, mode="sentence")
+
+        # Can iterate and filter easily
+        texts = [seg.text for seg in result if seg.text.strip()]
+        assert len(texts) == 3
+
+        # Can count total segments
+        total = len(result)
+        assert total == 3
+
+    def test_ellipsis_preserved(self) -> None:
+        """Test that ellipsis is preserved in split_text."""
+        text = "Hello... world."
+        result = split_text(text, mode="sentence")
+
+        assert len(result) == 1
+        assert "..." in result[0].text
+        assert ". . ." not in result[0].text
