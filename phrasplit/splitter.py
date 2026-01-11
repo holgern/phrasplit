@@ -1,8 +1,17 @@
-"""Text splitting utilities using spaCy for NLP-based sentence and clause detection."""
+"""Text splitting utilities using spaCy for NLP-based sentence and clause detection.
+
+This module provides two implementations:
+1. spaCy-based (default when available): High accuracy, handles complex cases
+2. Regex-based (fallback): Faster, simpler, good for common cases
+
+The implementation is selected automatically based on spaCy availability,
+or can be controlled via the use_spacy parameter.
+"""
 
 from __future__ import annotations
 
 import re
+import warnings
 from typing import TYPE_CHECKING, NamedTuple
 
 from phrasplit.abbreviations import (
@@ -445,7 +454,9 @@ def _get_nlp(language_model: str = "en_core_web_sm") -> Language:
     """
     if not SPACY_AVAILABLE:
         raise ImportError(
-            "spaCy is required for this feature. Install with: pip install phrasplit"
+            "spaCy is required for this feature. "
+            "Install with: pip install phrasplit[nlp]\n"
+            "Then download a language model: python -m spacy download en_core_web_sm"
         )
 
     if language_model not in _nlp_cache:
@@ -554,14 +565,14 @@ def split_paragraphs(text: str) -> list[str]:
     return [p.strip() for p in paragraphs if p.strip()]
 
 
-def split_sentences(
+def _split_sentences_spacy(
     text: str,
     language_model: str = "en_core_web_sm",
     apply_corrections: bool = True,
     split_on_colon: bool = True,
 ) -> list[str]:
     """
-    Split text into sentences using spaCy.
+    Split text into sentences using spaCy (internal implementation).
 
     Args:
         text: Input text
@@ -601,6 +612,90 @@ def split_sentences(
     return result
 
 
+def split_sentences(
+    text: str,
+    language_model: str = "en_core_web_sm",
+    apply_corrections: bool = True,
+    split_on_colon: bool = True,
+    use_spacy: bool | None = None,
+) -> list[str]:
+    """
+    Split text into sentences.
+
+    By default, uses spaCy if available for best accuracy, otherwise falls back
+    to regex-based splitting. You can force a specific implementation with use_spacy.
+
+    Args:
+        text: Input text
+        language_model: Language model name (e.g., "en_core_web_sm", "de_core_news_sm")
+            For spaCy mode: Name of the spaCy model to use
+            For simple mode: Used to determine language for abbreviation handling
+        apply_corrections: Whether to apply post-processing corrections for
+            common spaCy errors (URL splitting, abbreviation handling).
+            Default is True. Only applies to spaCy mode.
+        split_on_colon: Deprecated. Kept for API compatibility (currently unused).
+            spaCy's default colon behavior is used. Default is True.
+        use_spacy: Choose implementation:
+            - None (default): Auto-detect spaCy and use if available
+            - True: Force spaCy (raise ImportError if not installed)
+            - False: Force simple regex-based splitting (no spaCy)
+
+    Returns:
+        List of sentences
+
+    Raises:
+        ImportError: If use_spacy=True but spaCy is not installed
+
+    Example:
+        >>> # Auto-detect (uses spaCy if available)
+        >>> sentences = split_sentences(text)
+        >>>
+        >>> # Force simple mode (even if spaCy is installed)
+        >>> sentences = split_sentences(text, use_spacy=False)
+        >>>
+        >>> # Force spaCy mode (error if not installed)
+        >>> sentences = split_sentences(text, use_spacy=True)
+
+    Note:
+        The simple mode (regex-based) is faster and has no ML dependencies,
+        but is less accurate (~85-90% vs ~95%+ for spaCy) on complex text.
+        For best results with complex text, install spaCy:
+        pip install phrasplit[nlp]
+    """
+    # Deprecation warning for split_on_colon
+    if not split_on_colon:
+        warnings.warn(
+            "The split_on_colon parameter is deprecated and has no effect. "
+            "It will be removed in a future version.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    # Determine which implementation to use
+    if use_spacy is None:
+        # Auto-detect: use spaCy if available
+        use_spacy = SPACY_AVAILABLE
+    elif use_spacy and not SPACY_AVAILABLE:
+        # User explicitly requested spaCy but it's not available
+        raise ImportError(
+            "spaCy is not installed. Install with: pip install phrasplit[nlp]\n"
+            "Then download a language model: python -m spacy download en_core_web_sm\n"
+            "Or use use_spacy=False to use the simple regex-based splitter."
+        )
+
+    if use_spacy:
+        # Use spaCy-based implementation
+        return _split_sentences_spacy(
+            text, language_model, apply_corrections, split_on_colon
+        )
+    else:
+        # Use simple regex-based implementation
+        # Import here to avoid circular dependency issues
+        from phrasplit.splitter_without_spacy import split_sentences_simple
+
+        return split_sentences_simple(text, language_model)
+
+
 def _split_sentence_into_clauses(sentence: str) -> list[str]:
     """
     Split a sentence into comma-separated parts for audiobook creation.
@@ -624,16 +719,12 @@ def _split_sentence_into_clauses(sentence: str) -> list[str]:
     return clauses if clauses else [sentence]
 
 
-def split_clauses(
+def _split_clauses_spacy(
     text: str,
     language_model: str = "en_core_web_sm",
 ) -> list[str]:
     """
-    Split text into comma-separated parts for audiobook creation.
-
-    Uses spaCy for sentence detection, then splits each sentence at commas.
-    The comma stays at the end of each part, creating natural pause points
-    for text-to-speech processing.
+    Split text into comma-separated parts using spaCy (internal implementation).
 
     Args:
         text: Input text
@@ -641,10 +732,6 @@ def split_clauses(
 
     Returns:
         List of comma-separated parts
-
-    Example:
-        Input: "I do like coffee, and I like wine."
-        Output: ["I do like coffee,", "and I like wine."]
     """
     nlp = _get_nlp(language_model)
     paragraphs = split_paragraphs(text)
@@ -670,6 +757,53 @@ def split_clauses(
             result.extend(clauses)
 
     return result
+
+
+def split_clauses(
+    text: str,
+    language_model: str = "en_core_web_sm",
+    use_spacy: bool | None = None,
+) -> list[str]:
+    """
+    Split text into comma-separated parts for audiobook creation.
+
+    Uses sentence detection, then splits each sentence at commas.
+    The comma stays at the end of each part, creating natural pause points
+    for text-to-speech processing.
+
+    Args:
+        text: Input text
+        language_model: Language model name (e.g., "en_core_web_sm")
+        use_spacy: Choose implementation:
+            - None (default): Auto-detect spaCy and use if available
+            - True: Force spaCy (raise ImportError if not installed)
+            - False: Force simple regex-based splitting
+
+    Returns:
+        List of comma-separated parts
+
+    Raises:
+        ImportError: If use_spacy=True but spaCy is not installed
+
+    Example:
+        Input: "I do like coffee, and I like wine."
+        Output: ["I do like coffee,", "and I like wine."]
+    """
+    # Determine which implementation to use
+    if use_spacy is None:
+        use_spacy = SPACY_AVAILABLE
+    elif use_spacy and not SPACY_AVAILABLE:
+        raise ImportError(
+            "spaCy is not installed. Install with: pip install phrasplit[nlp]\n"
+            "Or use use_spacy=False to use the simple regex-based splitter."
+        )
+
+    if use_spacy:
+        return _split_clauses_spacy(text, language_model)
+    else:
+        from phrasplit.splitter_without_spacy import split_clauses_simple
+
+        return split_clauses_simple(text, language_model)
 
 
 def _split_at_clauses(text: str, max_length: int) -> list[str]:
@@ -794,18 +928,13 @@ def _split_at_boundaries(text: str, max_length: int, nlp: Language) -> list[str]
     return result if result else [text]
 
 
-def split_long_lines(
+def _split_long_lines_spacy(
     text: str,
     max_length: int,
     language_model: str = "en_core_web_sm",
 ) -> list[str]:
     """
-    Split lines exceeding max_length at clause/sentence boundaries.
-
-    Strategy:
-    1. First try to split at sentence boundaries
-    2. If still too long, split at clause boundaries (commas, semicolons, etc.)
-    3. If still too long, split at word boundaries
+    Split lines exceeding max_length at clause/sentence boundaries using spaCy.
 
     Args:
         text: Input text
@@ -839,12 +968,60 @@ def split_long_lines(
     return result
 
 
+def split_long_lines(
+    text: str,
+    max_length: int,
+    language_model: str = "en_core_web_sm",
+    use_spacy: bool | None = None,
+) -> list[str]:
+    """
+    Split lines exceeding max_length at clause/sentence boundaries.
+
+    Strategy:
+    1. First try to split at sentence boundaries
+    2. If still too long, split at clause boundaries (commas, semicolons, etc.)
+    3. If still too long, split at word boundaries
+
+    Args:
+        text: Input text
+        max_length: Maximum line length in characters (must be positive)
+        language_model: Language model name (e.g., "en_core_web_sm")
+        use_spacy: Choose implementation:
+            - None (default): Auto-detect spaCy and use if available
+            - True: Force spaCy (raise ImportError if not installed)
+            - False: Force simple regex-based splitting
+
+    Returns:
+        List of lines, each within max_length (except single words exceeding limit)
+
+    Raises:
+        ValueError: If max_length is less than 1
+        ImportError: If use_spacy=True but spaCy is not installed
+    """
+    # Determine which implementation to use
+    if use_spacy is None:
+        use_spacy = SPACY_AVAILABLE
+    elif use_spacy and not SPACY_AVAILABLE:
+        raise ImportError(
+            "spaCy is not installed. Install with: pip install phrasplit[nlp]\n"
+            "Or use use_spacy=False to use the simple regex-based splitter."
+        )
+
+    if use_spacy:
+        return _split_long_lines_spacy(text, max_length, language_model)
+    else:
+        from phrasplit.splitter_without_spacy import split_long_lines_simple
+
+        return split_long_lines_simple(text, max_length, language_model)
+
+
 def split_text(
     text: str,
     mode: str = "sentence",
     language_model: str = "en_core_web_sm",
     apply_corrections: bool = True,
     split_on_colon: bool = True,
+    use_spacy: bool | None = None,
 ) -> list[Segment]:
     """
     Split text into segments with hierarchical position information.
@@ -861,12 +1038,16 @@ def split_text(
             - "sentence": Split into sentences, grouped by paragraph
             - "clause": Split into clauses (comma-separated), with paragraph
               and sentence info
-        language_model: spaCy language model to use (for sentence/clause modes)
+        language_model: Language model name (e.g., "en_core_web_sm")
         apply_corrections: Whether to apply post-processing corrections for
             common spaCy errors (URL splitting, abbreviation handling).
-            Default is True. Only applies to sentence/clause modes.
-        split_on_colon: Kept for API compatibility (currently unused).
+            Default is True. Only applies to spaCy mode and sentence/clause modes.
+        split_on_colon: Deprecated. Kept for API compatibility (currently unused).
             spaCy's default colon behavior is used. Default is True.
+        use_spacy: Choose implementation:
+            - None (default): Auto-detect spaCy and use if available
+            - True: Force spaCy (raise ImportError if not installed)
+            - False: Force simple regex-based splitting
 
     Returns:
         List of Segment namedtuples, each containing:
@@ -877,6 +1058,7 @@ def split_text(
 
     Raises:
         ValueError: If mode is not one of "paragraph", "sentence", "clause"
+        ImportError: If use_spacy=True but spaCy is not installed
 
     Example:
         >>> segments = split_text("Hello world. How are you?\\n\\nNew paragraph.")
@@ -892,6 +1074,15 @@ def split_text(
         ...         print("--- paragraph break ---")
         ...     print(seg.text)
     """
+    # Deprecation warning
+    if not split_on_colon:
+        warnings.warn(
+            "The split_on_colon parameter is deprecated and has no effect. "
+            "It will be removed in a future version.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
     valid_modes = ("paragraph", "sentence", "clause")
     if mode not in valid_modes:
         raise ValueError(f"mode must be one of {valid_modes}, got {mode!r}")
@@ -908,35 +1099,68 @@ def split_text(
             result.append(Segment(text=para, paragraph=para_idx, sentence=None))
         return result
 
-    # For sentence and clause modes, we need spaCy
-    nlp = _get_nlp(language_model)
+    # Determine which implementation to use for sentence/clause modes
+    if use_spacy is None:
+        use_spacy = SPACY_AVAILABLE
+    elif use_spacy and not SPACY_AVAILABLE:
+        raise ImportError(
+            "spaCy is not installed. Install with: pip install phrasplit[nlp]\n"
+            "Or use use_spacy=False to use the simple regex-based splitter."
+        )
 
-    for para_idx, para in enumerate(paragraphs):
-        # Protect ellipsis from being treated as sentence boundaries
-        protected_para = _protect_ellipsis(para)
+    if use_spacy:
+        # Use spaCy implementation
+        nlp = _get_nlp(language_model)
 
-        # Process paragraph into sentences (handles long text)
-        sentences = _process_long_text(protected_para, nlp)
+        for para_idx, para in enumerate(paragraphs):
+            # Protect ellipsis from being treated as sentence boundaries
+            protected_para = _protect_ellipsis(para)
 
-        # Restore ellipsis in sentences
-        sentences = [_restore_ellipsis(sent) for sent in sentences]
+            # Process paragraph into sentences (handles long text)
+            sentences = _process_long_text(protected_para, nlp)
 
-        # Apply post-processing corrections if enabled
-        if apply_corrections:
-            sentences = _apply_corrections(
-                sentences, language_model, split_on_colon, nlp
-            )
+            # Restore ellipsis in sentences
+            sentences = [_restore_ellipsis(sent) for sent in sentences]
 
-        if mode == "sentence":
-            for sent_idx, sent in enumerate(sentences):
-                result.append(Segment(text=sent, paragraph=para_idx, sentence=sent_idx))
+            # Apply post-processing corrections if enabled
+            if apply_corrections:
+                sentences = _apply_corrections(
+                    sentences, language_model, split_on_colon, nlp
+                )
 
-        elif mode == "clause":
-            for sent_idx, sent in enumerate(sentences):
-                clauses = _split_sentence_into_clauses(sent)
-                for clause in clauses:
+            if mode == "sentence":
+                for sent_idx, sent in enumerate(sentences):
                     result.append(
-                        Segment(text=clause, paragraph=para_idx, sentence=sent_idx)
+                        Segment(text=sent, paragraph=para_idx, sentence=sent_idx)
                     )
+
+            elif mode == "clause":
+                for sent_idx, sent in enumerate(sentences):
+                    clauses = _split_sentence_into_clauses(sent)
+                    for clause in clauses:
+                        result.append(
+                            Segment(text=clause, paragraph=para_idx, sentence=sent_idx)
+                        )
+    else:
+        # Use simple implementation
+        from phrasplit.splitter_without_spacy import split_sentences_simple
+
+        for para_idx, para in enumerate(paragraphs):
+            # Get sentences for this paragraph
+            sentences = split_sentences_simple(para, language_model)
+
+            if mode == "sentence":
+                for sent_idx, sent in enumerate(sentences):
+                    result.append(
+                        Segment(text=sent, paragraph=para_idx, sentence=sent_idx)
+                    )
+
+            elif mode == "clause":
+                for sent_idx, sent in enumerate(sentences):
+                    clauses = _split_sentence_into_clauses(sent)
+                    for clause in clauses:
+                        result.append(
+                            Segment(text=clause, paragraph=para_idx, sentence=sent_idx)
+                        )
 
     return result

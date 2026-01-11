@@ -6,8 +6,9 @@ This guide covers how to use phrasplit's Python API for text splitting.
 Splitting Sentences
 -------------------
 
-The :func:`~phrasplit.split_sentences` function uses spaCy's NLP pipeline to
-intelligently detect sentence boundaries:
+The :func:`~phrasplit.split_sentences` function intelligently detects sentence
+boundaries. It can use either spaCy's NLP pipeline (high accuracy) or regex-based
+splitting (lightweight, no dependencies):
 
 .. code-block:: python
 
@@ -34,6 +35,40 @@ Example with abbreviations:
    sentences = split_sentences(text)
    # ['Mr. Brown met Prof. Green.', 'They discussed the U.S.A. case.']
 
+Choosing Processing Mode
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+phrasplit automatically detects if spaCy is available and uses the appropriate mode.
+You can explicitly control this with the ``use_spacy`` parameter:
+
+.. code-block:: python
+
+   # Automatic detection (default)
+   sentences = split_sentences(text)
+   # Uses spaCy if available, otherwise falls back to regex
+
+   # Force simple mode (no spaCy required)
+   sentences = split_sentences(text, use_spacy=False)
+   # Uses regex-based splitting, faster and lightweight
+
+   # Force spaCy mode (will error if spaCy not installed)
+   sentences = split_sentences(text, use_spacy=True)
+   # Uses spaCy NLP for higher accuracy
+
+**When to use simple mode (use_spacy=False):**
+
+- You don't have spaCy installed
+- You need faster processing for simple text
+- You want to minimize dependencies and memory usage
+- Your text has clear sentence boundaries
+
+**When to use spaCy mode (use_spacy=True):**
+
+- You need the highest accuracy
+- Your text has complex abbreviations or edge cases
+- You're processing professional/academic content
+- Quality is more important than speed
+
 Colon Splitting
 ^^^^^^^^^^^^^^^
 
@@ -54,16 +89,23 @@ Splitting Clauses
 -----------------
 
 The :func:`~phrasplit.split_clauses` function splits text at commas, creating
-natural pause points ideal for audiobook and text-to-speech applications:
+natural pause points ideal for audiobook and text-to-speech applications.
+Like :func:`~phrasplit.split_sentences`, it supports both spaCy and simple modes:
 
 .. code-block:: python
 
    from phrasplit import split_clauses
 
    text = "I like coffee, and I like tea."
+
+   # Automatic mode detection
    clauses = split_clauses(text)
    print(clauses)
    # ['I like coffee,', 'and I like tea.']
+
+   # Force simple mode
+   clauses = split_clauses(text, use_spacy=False)
+   # Uses regex-based clause splitting
 
 The comma is kept at the end of each clause, preserving the original punctuation.
 
@@ -258,3 +300,13 @@ The same can be achieved more simply with :func:`~phrasplit.split_text`:
 
    for seg in segments:
        print(f"P{seg.paragraph} S{seg.sentence}: {seg.text}")
+
+The ``use_spacy`` parameter is also available for :func:`~phrasplit.split_text`:
+
+.. code-block:: python
+
+   # Use simple mode for faster processing
+   segments = split_text(text, mode="sentence", use_spacy=False)
+
+   # Explicitly use spaCy mode
+   segments = split_text(text, mode="sentence", use_spacy=True)

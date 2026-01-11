@@ -19,7 +19,6 @@ urls = { Homepage = "https://github.com/holgern/phrasplit" }
 dependencies = [
     "click>=8.0.0",
     "rich>=13.0.0",
-    "spacy>=3.5.0",
 ]
 classifiers=[
     'Intended Audience :: Developers',
@@ -37,9 +36,13 @@ classifiers=[
 dynamic=["version"]
 
 [project.optional-dependencies]
+nlp = [
+    "spacy>=3.5.0",
+]
 dev = [
     "pytest>=7.0.0",
     "ruff>=0.1.0",
+    "spacy>=3.5.0",
 ]
 
 [project.scripts]

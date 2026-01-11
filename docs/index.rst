@@ -1,32 +1,56 @@
 phrasplit Documentation
 =======================
 
-A Python library for splitting text into sentences, clauses, or paragraphs using
-spaCy NLP. Designed for audiobook creation and text-to-speech processing.
+A Python library for splitting text into sentences, clauses, or paragraphs.
+Designed for audiobook creation and text-to-speech processing.
+
+phrasplit supports two processing modes:
+
+- **spaCy mode** (optional): High-accuracy NLP-based splitting using spaCy
+- **Simple mode**: Lightweight regex-based splitting with no dependencies
 
 Features
 --------
 
-- **Sentence splitting**: Intelligent sentence boundary detection using spaCy
+- **Sentence splitting**: Intelligent sentence boundary detection
 - **Clause splitting**: Split sentences at commas for natural pause points
 - **Paragraph splitting**: Split text at double newlines
 - **Long line splitting**: Break long lines at sentence/clause boundaries
 - **Abbreviation handling**: Correctly handles Mr., Dr., U.S.A., etc.
 - **Ellipsis support**: Preserves ellipses without incorrect splitting
+- **Flexible installation**: Works with or without spaCy
+- **Auto-detection**: Automatically uses the best available mode
+
+Mode Comparison
+---------------
+
+=========================  =====================  ====================
+Feature                    Simple Mode            spaCy Mode
+=========================  =====================  ====================
+Dependencies               None (regex only)      spaCy + models
+Installation size          Minimal                ~500MB+ with models
+Speed                      Very fast              Fast
+Memory usage               Low                    Medium-High
+Accuracy                   Good                   Excellent
+Complex abbreviations      Basic support          Full support
+Dependency parsing         No                     Yes
+Multi-language             Limited                Extensive
+=========================  =====================  ====================
 
 Installation
 ------------
 
-Install phrasplit using pip:
+Install without spaCy (lightweight):
 
 .. code-block:: bash
 
    pip install phrasplit
 
-You'll also need to download a spaCy language model:
+Install with spaCy support (recommended):
 
 .. code-block:: bash
 
+   pip install phrasplit[spacy]
    python -m spacy download en_core_web_sm
 
 Quick Start
@@ -36,10 +60,13 @@ Quick Start
 
    from phrasplit import split_sentences, split_clauses, split_paragraphs
 
-   # Split text into sentences
+   # Split text into sentences (works with or without spaCy)
    text = "Dr. Smith is here. She has a Ph.D. in Chemistry."
    sentences = split_sentences(text)
    # ['Dr. Smith is here.', 'She has a Ph.D. in Chemistry.']
+
+   # Explicitly use simple mode (no spaCy required)
+   sentences = split_sentences(text, use_spacy=False)
 
    # Split sentences into comma-separated parts
    text = "I like coffee, and I like tea."

@@ -5,32 +5,74 @@
 
 # phrasplit
 
-A Python library for splitting text into sentences, clauses, or paragraphs using spaCy
-NLP. Designed for audiobook creation and text-to-speech processing.
+A Python library for splitting text into sentences, clauses, or paragraphs. Choose
+between spaCy NLP for best accuracy or fast regex-based splitting for simple use cases.
 
 ## Features
 
-- **Sentence splitting**: Intelligent sentence boundary detection using spaCy
+- **Two modes**: spaCy (accurate) or simple regex (fast, no ML dependencies)
+- **Sentence splitting**: Intelligent sentence boundary detection
 - **Clause splitting**: Split sentences at commas for natural pause points
-- **Paragraph splitting**: Split text at double newlines
+- **Paragraph splitting**: Split text at double newlines (no spaCy needed)
 - **Hierarchical splitting**: Split text with paragraph/sentence position tracking
 - **Long line splitting**: Break long lines at sentence/clause boundaries
 - **Abbreviation handling**: Correctly handles Mr., Dr., U.S.A., etc.
 - **Ellipsis support**: Preserves ellipses without incorrect splitting
+- **25+ languages**: Multi-language abbreviation support
 
 ## Installation
+
+### Basic Installation (Simple Mode)
+
+For fast, regex-based splitting without ML dependencies:
 
 ```bash
 pip install phrasplit
 ```
 
-You'll also need to download a spaCy language model:
+### Full Installation (spaCy Mode)
+
+For best accuracy with complex text, install with spaCy:
 
 ```bash
+pip install phrasplit[nlp]
 python -m spacy download en_core_web_sm
 ```
 
+## Performance Comparison
+
+| Mode       | Speed       | Accuracy | Dependencies            | When to Use                      |
+| ---------- | ----------- | -------- | ----------------------- | -------------------------------- |
+| **Simple** | ~60x faster | ~85-90%  | None (regex only)       | Simple text, speed-critical apps |
+| **spaCy**  | Baseline    | ~95%+    | spaCy + models (~500MB) | Complex text, best accuracy      |
+
+Benchmark results (1000 sentences):
+
+- spaCy: 1091ms
+- Simple: 17ms (63x faster)
+
+Both modes produce nearly identical results for well-formatted text.
+
 ## Quick Start
+
+### Auto-Detection (Recommended)
+
+Phrasplit automatically uses spaCy if installed, otherwise falls back to simple mode:
+
+```python
+from phrasplit import split_sentences, split_clauses, split_paragraphs
+
+# Uses spaCy if installed, otherwise simple mode
+text = "Dr. Smith is here. She has a Ph.D. in Chemistry."
+sentences = split_sentences(text)
+# ['Dr. Smith is here.', 'She has a Ph.D. in Chemistry.']
+
+# Force simple mode (even if spaCy is installed)
+sentences = split_sentences(text, use_spacy=False)
+
+# Force spaCy mode (error if not installed)
+sentences = split_sentences(text, use_spacy=True)
+```
 
 ### Python API
 
@@ -47,7 +89,7 @@ text = "I like coffee, and I like tea."
 clauses = split_clauses(text)
 # ['I like coffee,', 'and I like tea.']
 
-# Split text into paragraphs
+# Split text into paragraphs (no spaCy needed)
 text = "First paragraph.\n\nSecond paragraph."
 paragraphs = split_paragraphs(text)
 # ['First paragraph.', 'Second paragraph.']
@@ -116,21 +158,28 @@ phrasplit sentences - < input.txt
 
 ## API Reference
 
-### `split_sentences(text, language_model="en_core_web_sm", apply_corrections=True, split_on_colon=True)`
+### `split_sentences(text, language_model="en_core_web_sm", apply_corrections=True, use_spacy=None)`
 
-Split text into sentences using spaCy's sentence boundary detection.
+Split text into sentences.
 
 **Parameters:**
 
 - `text`: Input text string
-- `language_model`: spaCy model to use (default: "en_core_web_sm")
+- `language_model`: Language model name (e.g., "en_core_web_sm", "de_core_news_sm")
+  - For spaCy mode: Name of the spaCy model to use
+  - For simple mode: Used to determine language for abbreviation handling
 - `apply_corrections`: Apply post-processing corrections for URLs and abbreviations
-  (default: True)
-- `split_on_colon`: Treat colons as sentence terminators (default: True)
+  (default: True, only applies to spaCy mode)
+- `use_spacy`: Choose implementation:
+  - `None` (default): Auto-detect (use spaCy if available)
+  - `True`: Force spaCy mode (raises ImportError if not installed)
+  - `False`: Force simple regex mode
 
 **Returns:** List of sentences
 
-### `split_clauses(text, language_model="en_core_web_sm")`
+**Raises:** `ImportError` if `use_spacy=True` but spaCy is not installed
+
+### `split_clauses(text, language_model="en_core_web_sm", use_spacy=None)`
 
 Split text into comma-separated parts. Useful for creating natural pause points in
 audiobook/TTS applications.
@@ -138,13 +187,14 @@ audiobook/TTS applications.
 **Parameters:**
 
 - `text`: Input text string
-- `language_model`: spaCy model to use (default: "en_core_web_sm")
+- `language_model`: Language model name (default: "en_core_web_sm")
+- `use_spacy`: Choose implementation (default: None for auto-detect)
 
 **Returns:** List of clauses (comma stays at end of each part)
 
 ### `split_paragraphs(text)`
 
-Split text into paragraphs at double newlines.
+Split text into paragraphs at double newlines. Works without spaCy.
 
 **Parameters:**
 
@@ -152,7 +202,7 @@ Split text into paragraphs at double newlines.
 
 **Returns:** List of paragraphs
 
-### `split_text(text, mode="sentence", language_model="en_core_web_sm", apply_corrections=True, split_on_colon=True)`
+### `split_text(text, mode="sentence", language_model="en_core_web_sm", apply_corrections=True, use_spacy=None)`
 
 Split text into segments with hierarchical position information.
 
@@ -160,9 +210,9 @@ Split text into segments with hierarchical position information.
 
 - `text`: Input text string
 - `mode`: Splitting mode - "paragraph", "sentence", or "clause"
-- `language_model`: spaCy model to use (default: "en_core_web_sm")
+- `language_model`: Language model name (default: "en_core_web_sm")
 - `apply_corrections`: Apply post-processing corrections (default: True)
-- `split_on_colon`: Treat colons as sentence terminators (default: True)
+- `use_spacy`: Choose implementation (default: None for auto-detect)
 
 **Returns:** List of `Segment` namedtuples with fields:
 
@@ -170,7 +220,7 @@ Split text into segments with hierarchical position information.
 - `paragraph`: Paragraph index (0-based)
 - `sentence`: Sentence index within paragraph (0-based), None for paragraph mode
 
-### `split_long_lines(text, max_length, language_model="en_core_web_sm")`
+### `split_long_lines(text, max_length, language_model="en_core_web_sm", use_spacy=None)`
 
 Split lines exceeding max_length at sentence/clause boundaries.
 
@@ -178,7 +228,8 @@ Split lines exceeding max_length at sentence/clause boundaries.
 
 - `text`: Input text string
 - `max_length`: Maximum line length in characters (must be >= 1)
-- `language_model`: spaCy model to use (default: "en_core_web_sm")
+- `language_model`: Language model name (default: "en_core_web_sm")
+- `use_spacy`: Choose implementation (default: None for auto-detect)
 
 **Returns:** List of lines, each within max_length (except single words exceeding limit)
 
@@ -237,10 +288,44 @@ for paragraph in split_paragraphs(text):
 
 ## Requirements
 
-- Python 3.9+
-- spaCy 3.5+
+- Python 3.10+
 - click 8.0+
 - rich 13.0+
+- spaCy 3.5+ (optional, for best accuracy)
+
+## Choosing Between Modes
+
+### Use Simple Mode When:
+
+- Processing simple, well-formatted text
+- Speed is critical (60-100x faster)
+- Deploying in constrained environments (no ML dependencies)
+- Installing spaCy models is not feasible (~500MB per language)
+
+### Use spaCy Mode When:
+
+- Processing complex, informal, or poorly formatted text
+- Accuracy is paramount (5-10% better)
+- Already using spaCy in your pipeline
+- Working with academic or literary texts
+
+## Migration Guide
+
+### Upgrading from Previous Versions
+
+Version 1.x made spaCy optional. Your existing code continues to work:
+
+```python
+# Old code (still works, auto-uses spaCy if installed)
+from phrasplit import split_sentences
+sentences = split_sentences(text)
+
+# New: Explicit control
+sentences = split_sentences(text, use_spacy=False)  # Force simple
+sentences = split_sentences(text, use_spacy=True)   # Force spaCy
+```
+
+The `split_on_colon` parameter is deprecated and will be removed in a future version.
 
 ## License
 

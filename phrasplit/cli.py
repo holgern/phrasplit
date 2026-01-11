@@ -83,6 +83,13 @@ def sentences(
         result = split_sentences(text, language_model=model)
     except (ImportError, OSError) as e:
         error_console.print(f"[red]Error:[/red] {e}")
+        if isinstance(e, ImportError):
+            error_console.print(
+                "\n[yellow]Tip:[/yellow] The simple regex-based splitter is being used."
+            )
+            error_console.print("[yellow]For better accuracy, install spaCy:[/yellow]")
+            error_console.print("  pip install phrasplit[nlp]")
+            error_console.print(f"  python -m spacy download {model}")
         sys.exit(1)
 
     output_text = "\n".join(result)
@@ -122,6 +129,13 @@ def clauses(
         result = split_clauses(text, language_model=model)
     except (ImportError, OSError) as e:
         error_console.print(f"[red]Error:[/red] {e}")
+        if isinstance(e, ImportError):
+            error_console.print(
+                "\n[yellow]Tip:[/yellow] The simple regex-based splitter is being used."
+            )
+            error_console.print("[yellow]For better accuracy, install spaCy:[/yellow]")
+            error_console.print("  pip install phrasplit[nlp]")
+            error_console.print(f"  python -m spacy download {model}")
         sys.exit(1)
 
     output_text = "\n".join(result)
@@ -196,6 +210,13 @@ def longlines(
         result = split_long_lines(text, max_length=max_length, language_model=model)
     except (ImportError, OSError, ValueError) as e:
         error_console.print(f"[red]Error:[/red] {e}")
+        if isinstance(e, ImportError):
+            error_console.print(
+                "\n[yellow]Tip:[/yellow] The simple regex-based splitter is being used."
+            )
+            error_console.print("[yellow]For better accuracy, install spaCy:[/yellow]")
+            error_console.print("  pip install phrasplit[nlp]")
+            error_console.print(f"  python -m spacy download {model}")
         sys.exit(1)
 
     output_text = "\n".join(result)

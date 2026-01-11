@@ -23,6 +23,9 @@ split_sentences
    sentences = split_sentences(text)
    # ['Dr. Smith is here.', 'She has a Ph.D. in Chemistry.']
 
+   # Use simple mode (no spaCy required)
+   sentences = split_sentences(text, use_spacy=False)
+
    # Disable colon splitting
    text = "Note: This is important."
    sentences = split_sentences(text, split_on_colon=False)
@@ -42,6 +45,9 @@ split_clauses
    text = "I like coffee, and I like tea."
    clauses = split_clauses(text)
    # ['I like coffee,', 'and I like tea.']
+
+   # Use simple mode for faster processing
+   clauses = split_clauses(text, use_spacy=False)
 
 split_paragraphs
 ^^^^^^^^^^^^^^^^
@@ -83,6 +89,9 @@ split_text
    segments = split_text(text, mode="clause")
    # Returns clauses with paragraph and sentence indices
 
+   # Use simple mode (no spaCy)
+   segments = split_text(text, mode="sentence", use_spacy=False)
+
 split_long_lines
 ^^^^^^^^^^^^^^^^
 
@@ -96,6 +105,9 @@ split_long_lines
 
    text = "This is a very long sentence that needs to be split into smaller parts."
    lines = split_long_lines(text, max_length=40)
+
+   # Use simple mode
+   lines = split_long_lines(text, max_length=40, use_spacy=False)
 
 Data Types
 ----------
@@ -172,11 +184,13 @@ Function signatures:
        language_model: str = "en_core_web_sm",
        apply_corrections: bool = True,
        split_on_colon: bool = True,
+       use_spacy: bool | None = None,
    ) -> list[str]: ...
 
    def split_clauses(
        text: str,
        language_model: str = "en_core_web_sm",
+       use_spacy: bool | None = None,
    ) -> list[str]: ...
 
    def split_paragraphs(text: str) -> list[str]: ...
@@ -187,10 +201,12 @@ Function signatures:
        language_model: str = "en_core_web_sm",
        apply_corrections: bool = True,
        split_on_colon: bool = True,
+       use_spacy: bool | None = None,
    ) -> list[Segment]: ...
 
    def split_long_lines(
        text: str,
        max_length: int,
        language_model: str = "en_core_web_sm",
+       use_spacy: bool | None = None,
    ) -> list[str]: ...
