@@ -143,6 +143,12 @@ def main() -> None:
         default=False,
         help="Disable splitting on colons",
     )
+    parser.add_argument(
+        "--simple",
+        action="store_true",
+        default=False,
+        help="Use simple regex-based splitting (no spaCy required)",
+    )
 
     args = parser.parse_args()
 
@@ -162,10 +168,12 @@ def main() -> None:
                 # Use the actual phrasplit.split_sentences() function
                 # Long text handling is built-in (automatic chunking)
                 split_on_colon = not args.no_split_on_colon
+                use_spacy = None if not args.simple else False
                 sentences = split_sentences(
                     line,
                     language_model=model_name,
                     split_on_colon=split_on_colon,
+                    use_spacy=use_spacy,
                 )
 
                 # Write each sentence on its own line

@@ -64,14 +64,23 @@ def main() -> None:
     default="en_core_web_sm",
     help="spaCy language model (default: en_core_web_sm)",
 )
+@click.option(
+    "--simple",
+    is_flag=True,
+    help="Use simple regex-based splitting (faster, no spaCy required)",
+)
 def sentences(
     input_file: str | None,
     output: Path | None,
     model: str,
+    simple: bool,
 ) -> None:
     """Split text into sentences.
 
     INPUT_FILE: Path to input file, or '-' for stdin. Reads from stdin if omitted.
+
+    By default, uses spaCy if available for best accuracy. Use --simple for
+    faster regex-based splitting that doesn't require spaCy.
     """
     try:
         text = read_input(input_file)
@@ -80,14 +89,17 @@ def sentences(
         sys.exit(1)
 
     try:
-        result = split_sentences(text, language_model=model)
+        use_spacy = None if not simple else False
+        result = split_sentences(text, language_model=model, use_spacy=use_spacy)
     except (ImportError, OSError) as e:
         error_console.print(f"[red]Error:[/red] {e}")
         if isinstance(e, ImportError):
             error_console.print(
-                "\n[yellow]Tip:[/yellow] The simple regex-based splitter is being used."
+                "\n[yellow]Tip:[/yellow] Use --simple flag for regex-based splitting,"
             )
-            error_console.print("[yellow]For better accuracy, install spaCy:[/yellow]")
+            error_console.print(
+                "[yellow]or install spaCy for better accuracy:[/yellow]"
+            )
             error_console.print("  pip install phrasplit[nlp]")
             error_console.print(f"  python -m spacy download {model}")
         sys.exit(1)
@@ -110,14 +122,23 @@ def sentences(
     default="en_core_web_sm",
     help="spaCy language model (default: en_core_web_sm)",
 )
+@click.option(
+    "--simple",
+    is_flag=True,
+    help="Use simple regex-based splitting (faster, no spaCy required)",
+)
 def clauses(
     input_file: str | None,
     output: Path | None,
     model: str,
+    simple: bool,
 ) -> None:
     """Split text into clauses (at commas).
 
     INPUT_FILE: Path to input file, or '-' for stdin. Reads from stdin if omitted.
+
+    By default, uses spaCy if available for best accuracy. Use --simple for
+    faster regex-based splitting that doesn't require spaCy.
     """
     try:
         text = read_input(input_file)
@@ -126,14 +147,17 @@ def clauses(
         sys.exit(1)
 
     try:
-        result = split_clauses(text, language_model=model)
+        use_spacy = None if not simple else False
+        result = split_clauses(text, language_model=model, use_spacy=use_spacy)
     except (ImportError, OSError) as e:
         error_console.print(f"[red]Error:[/red] {e}")
         if isinstance(e, ImportError):
             error_console.print(
-                "\n[yellow]Tip:[/yellow] The simple regex-based splitter is being used."
+                "\n[yellow]Tip:[/yellow] Use --simple flag for regex-based splitting,"
             )
-            error_console.print("[yellow]For better accuracy, install spaCy:[/yellow]")
+            error_console.print(
+                "[yellow]or install spaCy for better accuracy:[/yellow]"
+            )
             error_console.print("  pip install phrasplit[nlp]")
             error_console.print(f"  python -m spacy download {model}")
         sys.exit(1)
@@ -190,15 +214,24 @@ def paragraphs(
     default="en_core_web_sm",
     help="spaCy language model (default: en_core_web_sm)",
 )
+@click.option(
+    "--simple",
+    is_flag=True,
+    help="Use simple regex-based splitting (faster, no spaCy required)",
+)
 def longlines(
     input_file: str | None,
     output: Path | None,
     max_length: int,
     model: str,
+    simple: bool,
 ) -> None:
     """Split long lines at sentence/clause boundaries.
 
     INPUT_FILE: Path to input file, or '-' for stdin. Reads from stdin if omitted.
+
+    By default, uses spaCy if available for best accuracy. Use --simple for
+    faster regex-based splitting that doesn't require spaCy.
     """
     try:
         text = read_input(input_file)
@@ -207,14 +240,19 @@ def longlines(
         sys.exit(1)
 
     try:
-        result = split_long_lines(text, max_length=max_length, language_model=model)
+        use_spacy = None if not simple else False
+        result = split_long_lines(
+            text, max_length=max_length, language_model=model, use_spacy=use_spacy
+        )
     except (ImportError, OSError, ValueError) as e:
         error_console.print(f"[red]Error:[/red] {e}")
         if isinstance(e, ImportError):
             error_console.print(
-                "\n[yellow]Tip:[/yellow] The simple regex-based splitter is being used."
+                "\n[yellow]Tip:[/yellow] Use --simple flag for regex-based splitting,"
             )
-            error_console.print("[yellow]For better accuracy, install spaCy:[/yellow]")
+            error_console.print(
+                "[yellow]or install spaCy for better accuracy:[/yellow]"
+            )
             error_console.print("  pip install phrasplit[nlp]")
             error_console.print(f"  python -m spacy download {model}")
         sys.exit(1)

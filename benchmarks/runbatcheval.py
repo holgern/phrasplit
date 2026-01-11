@@ -10,9 +10,10 @@ Usage:
     python runbatcheval.py --all
 
 Example:
-    python runbatcheval.py en           # Evaluate English (both segmenters)
+    python runbatcheval.py en           # Evaluate English (spaCy + phrasplit)
     python runbatcheval.py en --spacy   # Evaluate raw spaCy only
-    python runbatcheval.py en --phrasplit  # Evaluate phrasplit only
+    python runbatcheval.py en --phrasplit  # Evaluate phrasplit (spaCy mode) only
+    python runbatcheval.py en --phrasplit-simple  # Evaluate phrasplit (simple mode)
     python runbatcheval.py --all        # Evaluate all languages
     python runbatcheval.py en -o results.txt  # Save output to file
     python runbatcheval.py en --model-size sm  # Only test small models
@@ -33,6 +34,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 # Segmenter types
 SEGMENTER_SPACY = "spacy"
 SEGMENTER_PHRASPLIT = "phrasplit"
+SEGMENTER_PHRASPLIT_SIMPLE = "phrasplit_simple"
 SEGMENTER_SENTENCIZER = "sentencizer"
 
 
@@ -256,7 +258,7 @@ def run_segmenter(
     """Run a sentence segmenter.
 
     Args:
-        segmenter: "spacy" or "phrasplit"
+        segmenter: "spacy", "phrasplit", "phrasplit_simple", or "sentencizer"
         lang_name: Language name (e.g., "English")
         test_file: Input test file
         out_file: Output file
@@ -270,6 +272,8 @@ def run_segmenter(
         script = SCRIPT_DIR / "spacy_segmenter.py"
     elif segmenter == SEGMENTER_SENTENCIZER:
         script = SCRIPT_DIR / "sentencizer_segmenter.py"
+    elif segmenter == SEGMENTER_PHRASPLIT_SIMPLE:
+        script = SCRIPT_DIR / "phrasplit_segmenter.py"
     else:
         script = SCRIPT_DIR / "phrasplit_segmenter.py"
 
@@ -285,8 +289,12 @@ def run_segmenter(
         cmd.extend(["--model", model])
 
     # Add --no-split-on-colon flag for phrasplit if needed
-    if segmenter == SEGMENTER_PHRASPLIT and not split_on_colon:
-        cmd.append("--no-split-on-colon")
+    if segmenter in (SEGMENTER_PHRASPLIT, SEGMENTER_PHRASPLIT_SIMPLE):
+        if not split_on_colon:
+            cmd.append("--no-split-on-colon")
+        # Add --simple flag for simple mode
+        if segmenter == SEGMENTER_PHRASPLIT_SIMPLE:
+            cmd.append("--simple")
 
     start_time = time.time()
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -451,7 +459,8 @@ def evaluate_language(
 
     Args:
         lang_code: Language code
-        segmenters: List of segmenters to test ("spacy", "phrasplit")
+        segmenters: List of segmenters to test
+            ("spacy", "phrasplit", "phrasplit_simple", "sentencizer")
         verbose: Print detailed output
         save_errors: Save error files for analysis
         split_on_colon: Whether to split on colons (only affects phrasplit)
@@ -686,7 +695,12 @@ def main():
     parser.add_argument(
         "--phrasplit",
         action="store_true",
-        help="Only test phrasplit segmenter",
+        help="Only test phrasplit segmenter (spaCy mode)",
+    )
+    parser.add_argument(
+        "--phrasplit-simple",
+        action="store_true",
+        help="Only test phrasplit segmenter (simple/regex mode)",
     )
     parser.add_argument(
         "--sentencizer",
@@ -736,6 +750,8 @@ def main():
             selected.append(SEGMENTER_SPACY)
         if args.phrasplit:
             selected.append(SEGMENTER_PHRASPLIT)
+        if args.phrasplit_simple:
+            selected.append(SEGMENTER_PHRASPLIT_SIMPLE)
         if args.sentencizer:
             selected.append(SEGMENTER_SENTENCIZER)
 

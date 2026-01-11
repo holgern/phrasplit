@@ -133,24 +133,33 @@ Available modes:
 ### Command Line Interface
 
 ```bash
-# Split into sentences
+# Split into sentences (auto-detects spaCy or uses simple mode)
 phrasplit sentences input.txt -o output.txt
+
+# Force simple mode (60x faster, no spaCy required)
+phrasplit sentences input.txt --simple
 
 # Split into clauses
 phrasplit clauses input.txt -o output.txt
 
-# Split into paragraphs
+# Use simple mode for clauses (faster)
+phrasplit clauses input.txt --simple -o output.txt
+
+# Split into paragraphs (no spaCy needed)
 phrasplit paragraphs input.txt -o output.txt
 
 # Split long lines (default max 80 characters)
 phrasplit longlines input.txt -o output.txt --max-length 60
 
-# Use a different spaCy model
+# Long lines with simple mode
+phrasplit longlines input.txt --simple --max-length 60
+
+# Use a different spaCy model (only for spaCy mode)
 phrasplit sentences input.txt --model en_core_web_lg
 
 # Read from stdin (pipe or redirect)
 echo "Hello world. This is a test." | phrasplit sentences
-cat input.txt | phrasplit clauses -o output.txt
+cat input.txt | phrasplit clauses --simple -o output.txt
 
 # Explicit stdin with dash
 phrasplit sentences - < input.txt
