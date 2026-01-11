@@ -237,8 +237,18 @@ def split_sentences_simple(
 
         # IMPORTANT: Handle closing quotes after punctuation
         # Protect quotes that immediately follow sentence-ending punctuation
-        # so they don't get a double boundary marker
-        text = re.sub(r'([.!?])(["\']+)', r"\1<QUOTE>", text)
+        # Store quotes with a unique marker that preserves the quote type
+        quote_map = {}
+        quote_counter = [0]  # Use list to allow modification in nested function
+
+        def replace_quote(match):
+            """Replace quote with placeholder that preserves original."""
+            quote_counter[0] += 1
+            placeholder = f"<QUOTE{quote_counter[0]}>"
+            quote_map[placeholder] = match.group(2)
+            return match.group(1) + placeholder
+
+        text = re.sub(r'([.!?])(["\']+)', replace_quote, text)
 
         # Mark sentence boundaries at terminal punctuation
         text = text.replace(".", f".{_SENTENCE_BOUNDARY}")
@@ -247,10 +257,12 @@ def split_sentences_simple(
 
         # Restore quotes AFTER sentence boundaries
         # They should be with the previous sentence
-        text = text.replace(
-            f"{_SENTENCE_BOUNDARY}<QUOTE>", f"<QUOTE>{_SENTENCE_BOUNDARY}"
-        )
-        text = text.replace("<QUOTE>", '"')  # Normalize to double quotes
+        for placeholder, original_quote in quote_map.items():
+            text = text.replace(
+                f"{_SENTENCE_BOUNDARY}{placeholder}",
+                f"{placeholder}{_SENTENCE_BOUNDARY}",
+            )
+            text = text.replace(placeholder, original_quote)
 
         # Restore protected periods
         text = text.replace(_PROTECTED_PERIOD, ".")
