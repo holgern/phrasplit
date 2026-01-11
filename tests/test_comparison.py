@@ -127,7 +127,13 @@ def test_performance_indicator() -> None:
     print("\nPerformance indicator:")
     print(f"  spaCy:  {spacy_time:.4f}s  ({len(spacy_result)} sentences)")
     print(f"  Simple: {simple_time:.4f}s  ({len(simple_result)} sentences)")
-    print(f"  Speedup: {spacy_time / simple_time:.2f}x")
+
+    # Calculate speedup, handling case where simple_time is very small or zero
+    if simple_time > 0:
+        speedup = spacy_time / simple_time
+        print(f"  Speedup: {speedup:.2f}x")
+    else:
+        print("  Speedup: >1000x (simple_time too small to measure)")
 
     # Both should get same sentence count on this simple text
     assert abs(len(spacy_result) - len(simple_result)) <= 1
