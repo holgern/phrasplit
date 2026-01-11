@@ -34,6 +34,10 @@ from phrasplit.splitter import (
 _WEBSITES = re.compile(
     r"\b(?:[\w\-]+\.)+(?:com|net|org|io|gov|edu|me|co|uk|de|fr|es|it)(?=\b|/)"
 )
+_FILE_EXTENSIONS = re.compile(
+    r"(?<=[\w/\-])(\.(?:md|txt|pdf|doc|docx|xls|xlsx|ppt|pptx|jpg|png|gif|svg|html|css|js|py|java|cpp|c|h|json|xml|yaml|yml|csv|zip|tar|gz|exe|dll|so|dylib))(?=\b|\s|$|[.,!?;:])",
+    re.IGNORECASE,
+)
 _DIGITS = re.compile(r"(?<=\d)\.(?=\d)")
 _MULTIPLE_DOTS = re.compile(r"\.{3,}")
 _INITIALS = re.compile(r"\b([A-Z])\.(?=[A-Z]\.)")
@@ -189,6 +193,11 @@ def split_sentences_simple(
         # 3. Websites and URLs
         text = _WEBSITES.sub(lambda m: m.group().replace(".", _PROTECTED_PERIOD), text)
 
+        # 3b. File extensions (file.md, docs/v2.0.1.txt, etc.)
+        text = _FILE_EXTENSIONS.sub(
+            lambda m: m.group().replace(".", _PROTECTED_PERIOD), text
+        )
+
         # 4. Numbers with decimals (3.14 → 3<prd>14)
         text = _DIGITS.sub(_PROTECTED_PERIOD, text)
 
@@ -219,11 +228,11 @@ def split_sentences_simple(
         # Special case: Add sentence boundary after certain abbreviations
         # if followed by sentence starters
         # (Inc. The company → Inc.<stop> The company)
-        pattern = rf"\b(?:Inc|Ltd|Jr|Sr|Co){_PROTECTED_PERIOD} "
+        pattern = rf"\b(Inc|Ltd|Jr|Sr|Co){_PROTECTED_PERIOD} "
         pattern += rf"(?={_SENTENCE_STARTERS.pattern})"
         text = re.sub(
             pattern,
-            f"{_PROTECTED_PERIOD}{_SENTENCE_BOUNDARY} ",
+            rf"\1{_PROTECTED_PERIOD}{_SENTENCE_BOUNDARY} ",
             text,
         )
 
@@ -235,34 +244,36 @@ def split_sentences_simple(
             text,
         )
 
-        # IMPORTANT: Handle closing quotes after punctuation
-        # Protect quotes that immediately follow sentence-ending punctuation
-        # Store quotes with a unique marker that preserves the quote type
-        quote_map = {}
-        quote_counter = [0]  # Use list to allow modification in nested function
+        # IMPORTANT: Handle closing punctuation after sentence terminators
+        # Protect quotes, brackets, and parentheses that immediately follow
+        # sentence-ending punctuation so they stay with the sentence
+        # Store them with unique markers that preserve the original characters
+        punct_map = {}
+        punct_counter = [0]  # Use list to allow modification in nested function
 
-        def replace_quote(match):
-            """Replace quote with placeholder that preserves original."""
-            quote_counter[0] += 1
-            placeholder = f"<QUOTE{quote_counter[0]}>"
-            quote_map[placeholder] = match.group(2)
+        def replace_closing_punct(match):
+            """Replace closing punctuation with placeholder that preserves original."""
+            punct_counter[0] += 1
+            placeholder = f"<CLOSING{punct_counter[0]}>"
+            punct_map[placeholder] = match.group(2)
             return match.group(1) + placeholder
 
-        text = re.sub(r'([.!?])(["\']+)', replace_quote, text)
+        # Protect quotes, brackets, and parentheses after sentence terminators
+        text = re.sub(r'([.!?])(["\')\]}>]+)', replace_closing_punct, text)
 
         # Mark sentence boundaries at terminal punctuation
         text = text.replace(".", f".{_SENTENCE_BOUNDARY}")
         text = text.replace("?", f"?{_SENTENCE_BOUNDARY}")
         text = text.replace("!", f"!{_SENTENCE_BOUNDARY}")
 
-        # Restore quotes AFTER sentence boundaries
+        # Restore closing punctuation AFTER sentence boundaries
         # They should be with the previous sentence
-        for placeholder, original_quote in quote_map.items():
+        for placeholder, original_punct in punct_map.items():
             text = text.replace(
                 f"{_SENTENCE_BOUNDARY}{placeholder}",
                 f"{placeholder}{_SENTENCE_BOUNDARY}",
             )
-            text = text.replace(placeholder, original_quote)
+            text = text.replace(placeholder, original_punct)
 
         # Restore protected periods
         text = text.replace(_PROTECTED_PERIOD, ".")
