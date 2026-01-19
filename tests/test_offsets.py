@@ -426,7 +426,7 @@ class TestPlaceholderValidation:
 
 
 class TestExactSliceInvariant:
-    """Tests for exact-slice policy: 
+    """Tests for exact-slice policy:
     segment.text == text[char_start:char_end]"""
 
     def test_exact_slice_basic(self) -> None:
