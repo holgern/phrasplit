@@ -1,5 +1,6 @@
 """Phrasplit - Split text into sentences, clauses, or paragraphs."""
 
+from .abbreviations import get_abbreviations
 from .splitter import (
     Segment,
     split_clauses,
@@ -7,6 +8,14 @@ from .splitter import (
     split_paragraphs,
     split_sentences,
     split_text,
+    split_with_offsets,
+    iter_split_with_offsets,
+)
+from .types import SplitSegment
+from .utils import (
+    COMMON_PATTERNS,
+    validate_no_placeholder_breaks,
+    suggest_splitting_mode,
 )
 
 try:
@@ -16,10 +25,17 @@ except ImportError:
 
 __all__ = [
     "__version__",
+    "COMMON_PATTERNS",
     "Segment",
+    "SplitSegment",
+    "get_abbreviations",
     "split_clauses",
     "split_long_lines",
     "split_paragraphs",
     "split_sentences",
     "split_text",
+    "split_with_offsets",
+    "iter_split_with_offsets",
+    "validate_no_placeholder_breaks",
+    "suggest_splitting_mode",
 ]

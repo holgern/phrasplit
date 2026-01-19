@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 import warnings
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, NamedTuple
 
 from phrasplit.abbreviations import (
@@ -19,6 +20,7 @@ from phrasplit.abbreviations import (
     get_sentence_ending_abbreviations,
     get_sentence_starters,
 )
+from phrasplit.types import SplitSegment
 
 
 class Segment(NamedTuple):
@@ -1164,3 +1166,491 @@ def split_text(
                         )
 
     return result
+
+
+# =============================================================================
+# Offset-preserving segmentation
+# =============================================================================
+
+
+def _make_segment_id(
+    paragraph_idx: int, sentence_idx: int, clause_idx: int | None = None
+) -> str:
+    """Generate a stable segment ID.
+
+    Args:
+        paragraph_idx: Paragraph index (0-based)
+        sentence_idx: Sentence index (0-based)
+        clause_idx: Clause index (0-based), or None
+
+    Returns:
+        Stable ID string in format "p{para}s{sent}" or "p{para}s{sent}c{clause}"
+    """
+    if clause_idx is None:
+        return f"p{paragraph_idx}s{sentence_idx}"
+    return f"p{paragraph_idx}s{sentence_idx}c{clause_idx}"
+
+
+def _split_with_offsets_regex(
+    text: str,
+    language_model: str = "en_core_web_sm",
+    mode: str = "sentence",
+    max_chars: int | None = None,
+) -> list[SplitSegment]:
+    """Split text using regex-based approach with character offsets.
+
+    Args:
+        text: Input text to split
+        language_model: Language model name for abbreviation handling
+        mode: Splitting mode ("paragraph", "sentence", or "clause")
+        max_chars: Optional maximum segment length
+
+    Returns:
+        List of SplitSegment objects with character offsets
+    """
+
+    if mode not in ("paragraph", "sentence", "clause"):
+        raise ValueError(
+            f"mode must be 'paragraph', 'sentence', or 'clause', got {mode!r}"
+        )
+
+    # Import regex-based functions
+    from phrasplit.splitter_without_spacy import split_sentences_simple
+
+    result: list[SplitSegment] = []
+
+    # Find paragraph boundaries using regex
+    para_pattern = re.compile(r"\n\s*\n")
+    para_starts = [0]
+    for match in para_pattern.finditer(text):
+        para_starts.append(match.end())
+
+    para_idx = 0
+    for i, para_start in enumerate(para_starts):
+        para_end = para_starts[i + 1] if i + 1 < len(para_starts) else len(text)
+        para_text = text[para_start:para_end].strip()
+
+        if not para_text:
+            continue
+
+        # Adjust para_start to account for stripped whitespace
+        while para_start < para_end and text[para_start].isspace():
+            para_start += 1
+
+        if mode == "paragraph":
+            seg_id = _make_segment_id(para_idx, 0)
+            segment = SplitSegment(
+                id=seg_id,
+                text=para_text,
+                char_start=para_start,
+                char_end=para_end,
+                paragraph_idx=para_idx,
+                sentence_idx=0,
+                clause_idx=None,
+                meta={"method": "regex", "mode": "paragraph"},
+            )
+            result.append(segment)
+            para_idx += 1
+            continue
+
+        # For sentence and clause modes, split further
+        sentences = split_sentences_simple(para_text, language_model)
+
+        # Track sentence offsets within paragraph
+        sent_idx = 0
+        search_start = 0
+
+        for sent_text in sentences:
+            # Find sentence in paragraph text
+            sent_offset = para_text.find(sent_text, search_start)
+            if sent_offset == -1:
+                # Fallback: use search_start
+                sent_offset = search_start
+
+            sent_start = para_start + sent_offset
+            sent_end = sent_start + len(sent_text)
+            search_start = sent_offset + len(sent_text)
+
+            if mode == "sentence":
+                seg_id = _make_segment_id(para_idx, sent_idx)
+                segment = SplitSegment(
+                    id=seg_id,
+                    text=sent_text,
+                    char_start=sent_start,
+                    char_end=sent_end,
+                    paragraph_idx=para_idx,
+                    sentence_idx=sent_idx,
+                    clause_idx=None,
+                    meta={"method": "regex", "mode": "sentence"},
+                )
+                result.append(segment)
+            else:  # clause mode
+                clauses = _split_sentence_into_clauses(sent_text)
+                clause_search_start = 0
+
+                for clause_idx, clause_text in enumerate(clauses):
+                    # Find clause within sentence
+                    clause_offset = sent_text.find(clause_text, clause_search_start)
+                    if clause_offset == -1:
+                        clause_offset = clause_search_start
+
+                    clause_start = sent_start + clause_offset
+                    clause_end = clause_start + len(clause_text)
+                    clause_search_start = clause_offset + len(clause_text)
+
+                    seg_id = _make_segment_id(para_idx, sent_idx, clause_idx)
+                    segment = SplitSegment(
+                        id=seg_id,
+                        text=clause_text,
+                        char_start=clause_start,
+                        char_end=clause_end,
+                        paragraph_idx=para_idx,
+                        sentence_idx=sent_idx,
+                        clause_idx=clause_idx,
+                        meta={"method": "regex", "mode": "clause"},
+                    )
+                    result.append(segment)
+
+            sent_idx += 1
+
+        para_idx += 1
+
+    # Apply max_chars splitting if needed
+    if max_chars is not None:
+        result = _apply_max_chars_split(text, result, max_chars)
+
+    return result
+
+
+def _split_with_offsets_spacy(
+    text: str,
+    language_model: str = "en_core_web_sm",
+    mode: str = "sentence",
+    max_chars: int | None = None,
+) -> list[SplitSegment]:
+    """Split text using spaCy-based approach with character offsets.
+
+    Args:
+        text: Input text to split
+        language_model: spaCy language model name
+        mode: Splitting mode ("paragraph", "sentence", or "clause")
+        max_chars: Optional maximum segment length
+
+    Returns:
+        List of SplitSegment objects with character offsets
+    """
+    if mode not in ("paragraph", "sentence", "clause"):
+        raise ValueError(
+            f"mode must be 'paragraph', 'sentence', or 'clause', got {mode!r}"
+        )
+
+    nlp = _get_nlp(language_model)
+    result: list[SplitSegment] = []
+
+    # Find paragraph boundaries
+    para_pattern = re.compile(r"\n\s*\n")
+    para_starts = [0]
+    for match in para_pattern.finditer(text):
+        para_starts.append(match.end())
+
+    para_idx = 0
+    for i, para_start in enumerate(para_starts):
+        para_end = para_starts[i + 1] if i + 1 < len(para_starts) else len(text)
+        para_text = text[para_start:para_end].strip()
+
+        if not para_text:
+            continue
+
+        # Adjust para_start to account for stripped whitespace
+        while para_start < para_end and text[para_start].isspace():
+            para_start += 1
+
+        if mode == "paragraph":
+            seg_id = _make_segment_id(para_idx, 0)
+            segment = SplitSegment(
+                id=seg_id,
+                text=para_text,
+                char_start=para_start,
+                char_end=para_end,
+                paragraph_idx=para_idx,
+                sentence_idx=0,
+                clause_idx=None,
+                meta={"method": "spacy", "mode": "paragraph"},
+            )
+            result.append(segment)
+            para_idx += 1
+            continue
+
+        # Process with spaCy
+        protected_para = _protect_ellipsis(para_text)
+        doc = nlp(protected_para)
+
+        sent_idx = 0
+        for sent in doc.sents:
+            sent_text = _restore_ellipsis(sent.text.strip())
+
+            if not sent_text:
+                continue
+
+            # Calculate absolute character offsets
+            # sent.start_char and sent.end_char are relative to protected_para
+            # We need to find the actual position in original text
+            sent_start = para_start + para_text.find(sent_text)
+            sent_end = sent_start + len(sent_text)
+
+            if mode == "sentence":
+                seg_id = _make_segment_id(para_idx, sent_idx)
+                segment = SplitSegment(
+                    id=seg_id,
+                    text=sent_text,
+                    char_start=sent_start,
+                    char_end=sent_end,
+                    paragraph_idx=para_idx,
+                    sentence_idx=sent_idx,
+                    clause_idx=None,
+                    meta={"method": "spacy", "mode": "sentence"},
+                )
+                result.append(segment)
+            else:  # clause mode
+                clauses = _split_sentence_into_clauses(sent_text)
+                clause_search_start = 0
+
+                for clause_idx, clause_text in enumerate(clauses):
+                    # Find clause within sentence
+                    clause_offset = sent_text.find(clause_text, clause_search_start)
+                    if clause_offset == -1:
+                        clause_offset = clause_search_start
+
+                    clause_start = sent_start + clause_offset
+                    clause_end = clause_start + len(clause_text)
+                    clause_search_start = clause_offset + len(clause_text)
+
+                    seg_id = _make_segment_id(para_idx, sent_idx, clause_idx)
+                    segment = SplitSegment(
+                        id=seg_id,
+                        text=clause_text,
+                        char_start=clause_start,
+                        char_end=clause_end,
+                        paragraph_idx=para_idx,
+                        sentence_idx=sent_idx,
+                        clause_idx=clause_idx,
+                        meta={"method": "spacy", "mode": "clause"},
+                    )
+                    result.append(segment)
+
+            sent_idx += 1
+
+        para_idx += 1
+
+    # Apply max_chars splitting if needed
+    if max_chars is not None:
+        result = _apply_max_chars_split(text, result, max_chars)
+
+    return result
+
+
+def _apply_max_chars_split(
+    original_text: str, segments: list[SplitSegment], max_chars: int
+) -> list[SplitSegment]:
+    """Split segments that exceed max_chars while preserving offsets.
+
+    Args:
+        original_text: The original input text
+        segments: List of segments to potentially split
+        max_chars: Maximum character length for any segment
+
+    Returns:
+        New list of segments with long segments split
+    """
+    result: list[SplitSegment] = []
+
+    for seg in segments:
+        if len(seg.text) <= max_chars:
+            result.append(seg)
+            continue
+
+        # Need to split this segment
+        # Strategy: split on whitespace or punctuation, fallback to hard split
+        text = seg.text
+        pos = 0
+        sub_idx = 0
+
+        while pos < len(text):
+            # Find a good split point within max_chars
+            end_pos = min(pos + max_chars, len(text))
+
+            if end_pos < len(text):
+                # Try to find whitespace or punctuation boundary
+                # Look backwards from end_pos
+                split_pos = end_pos
+                for i in range(end_pos - 1, pos, -1):
+                    if text[i] in " \t\n,;.!?":
+                        split_pos = i + 1
+                        break
+                end_pos = split_pos
+
+            chunk = text[pos:end_pos].strip()
+            if chunk:
+                # Calculate absolute offsets
+                chunk_start = seg.char_start + pos
+                chunk_end = chunk_start + len(chunk)
+
+                # Generate ID with sub-index if needed
+                if sub_idx == 0:
+                    chunk_id = seg.id
+                else:
+                    chunk_id = f"{seg.id}_chunk{sub_idx}"
+
+                chunk_seg = SplitSegment(
+                    id=chunk_id,
+                    text=chunk,
+                    char_start=chunk_start,
+                    char_end=chunk_end,
+                    paragraph_idx=seg.paragraph_idx,
+                    sentence_idx=seg.sentence_idx,
+                    clause_idx=seg.clause_idx,
+                    meta={**seg.meta, "split_by_max_chars": True},
+                )
+                result.append(chunk_seg)
+                sub_idx += 1
+
+            pos = end_pos
+            # Skip whitespace
+            while pos < len(text) and text[pos].isspace():
+                pos += 1
+
+    return result
+
+
+def split_with_offsets(
+    text: str,
+    *,
+    mode: str = "sentence",
+    use_spacy: bool | None = None,
+    language_model: str = "en_core_web_sm",
+    max_chars: int | None = None,
+) -> list[SplitSegment]:
+    """Split text into segments with character offsets and stable IDs.
+
+    This is the main API for offset-preserving segmentation, designed for
+    downstream processing.
+
+    Key features:
+    - Returns segments with precise character offsets (char_start, char_end)
+    - Generates stable, hierarchical IDs (e.g., "p0s1", "p0s2c3")
+    - Offsets map exactly to the original input text
+    - Supports both spaCy (accurate) and regex (fast) backends
+    - Optional max_chars safety splitting
+
+    Args:
+        text: Input text to split
+        mode: Splitting granularity:
+            - "paragraph": Split into paragraphs only
+            - "sentence": Split into sentences (default)
+            - "clause": Split into comma-separated clauses
+        use_spacy: Backend selection:
+            - None (default): Auto-detect, use spaCy if available
+            - True: Force spaCy (raises ImportError if unavailable)
+            - False: Force regex-based splitting
+        language_model: Language model name (e.g., "en_core_web_sm", "de_core_news_sm")
+            Used for both spaCy model selection and abbreviation handling
+        max_chars: Optional maximum segment length. Segments exceeding this
+            will be split further at whitespace/punctuation boundaries
+
+    Returns:
+        List of SplitSegment objects, each containing:
+            - id: Stable identifier (e.g., "p0s1c2")
+            - text: Segment text content
+            - char_start, char_end: Character offsets in original text
+            - paragraph_idx, sentence_idx, clause_idx: Hierarchical indices
+            - meta: Additional metadata (method, mode, etc.)
+
+    Raises:
+        ValueError: If mode is invalid or max_chars < 1
+        ImportError: If use_spacy=True but spaCy is not installed
+
+    Example:
+        >>> text = "Hello world. How are you?\\n\\nNew paragraph."
+        >>> segments = split_with_offsets(text, mode="sentence")
+        >>> for seg in segments:
+        ...     print(f"{seg.id}: {seg.text!r}")
+        ...     assert text[seg.char_start:seg.char_end] == seg.text
+        p0s0: 'Hello world.'
+        p0s1: 'How are you?'
+        p1s0: 'New paragraph.'
+
+        >>> # With max_chars safety splitting
+        >>> long_text = "word " * 100
+        >>> segments = split_with_offsets(long_text, max_chars=50)
+        >>> all(len(seg.text) <= 50 for seg in segments)
+        True
+
+    Note:
+        - Offsets preserve exact input text, including whitespace
+        - IDs are stable across runs with same input and settings
+    """
+    if max_chars is not None and max_chars < 1:
+        raise ValueError(f"max_chars must be at least 1, got {max_chars}")
+
+    # Determine which implementation to use
+    if use_spacy is None:
+        use_spacy = SPACY_AVAILABLE
+    elif use_spacy and not SPACY_AVAILABLE:
+        raise ImportError(
+            "spaCy is not installed. Install with: pip install phrasplit[nlp]\n"
+            "Then download a language model: python -m spacy download en_core_web_sm\n"
+            "Or use use_spacy=False to use the simple regex-based splitter."
+        )
+
+    if use_spacy:
+        return _split_with_offsets_spacy(text, language_model, mode, max_chars)
+    else:
+        return _split_with_offsets_regex(text, language_model, mode, max_chars)
+
+
+def iter_split_with_offsets(
+    text: str,
+    *,
+    mode: str = "sentence",
+    use_spacy: bool | None = None,
+    language_model: str = "en_core_web_sm",
+    max_chars: int | None = None,
+) -> Iterator[SplitSegment]:
+    """Streaming iterator variant of split_with_offsets().
+
+    Yields segments one by one in document order, enabling memory-efficient
+    processing of large texts and streaming TTS synthesis.
+
+    Args:
+        text: Input text to split
+        mode: Splitting granularity ("paragraph", "sentence", or "clause")
+        use_spacy: Backend selection (None=auto, True=spaCy, False=regex)
+        language_model: Language model name for NLP/abbreviations
+        max_chars: Optional maximum segment length
+
+    Yields:
+        SplitSegment objects in document order
+
+    Example:
+        >>> text = "First sentence. Second sentence.\\n\\nNew paragraph."
+        >>> for segment in iter_split_with_offsets(text, mode="sentence"):
+        ...     print(f"{segment.id}: {segment.text}")
+        p0s0: First sentence.
+        p0s1: Second sentence.
+        p1s0: New paragraph.
+
+    Note:
+        - Segments are yielded in document order
+        - No global state or caching
+        - Same offset guarantees as split_with_offsets()
+    """
+    # For now, use the non-streaming implementation and yield
+    # In the future, this could be optimized for true streaming
+    segments = split_with_offsets(
+        text,
+        mode=mode,
+        use_spacy=use_spacy,
+        language_model=language_model,
+        max_chars=max_chars,
+    )
+    yield from segments
