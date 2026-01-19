@@ -423,3 +423,198 @@ class TestPlaceholderValidation:
 
         with pytest.raises(ValueError, match="Invalid regex pattern"):
             suggest_splitting_mode(text, placeholder_pattern=r"[invalid(regex")
+
+
+class TestExactSliceInvariant:
+    """Tests for exact-slice policy: 
+    segment.text == text[char_start:char_end]"""
+
+    def test_exact_slice_basic(self) -> None:
+        """Test exact-slice invariant with simple text."""
+        text = "Hello world. How are you?"
+
+        for mode in ["paragraph", "sentence", "clause"]:
+            for use_spacy in [True, False]:
+                segments = split_with_offsets(text, mode=mode, use_spacy=use_spacy)
+
+                for seg in segments:
+                    # Exact-slice invariant: NO .strip() allowed
+                    assert text[seg.char_start : seg.char_end] == seg.text, (
+                        f"Invariant broken for mode={mode}, use_spacy={use_spacy}, "
+                        f"segment={seg.id}"
+                    )
+
+    def test_exact_slice_with_leading_whitespace(self) -> None:
+        """Test exact-slice with leading whitespace."""
+        text = "   Hello world.   "
+        segments = split_with_offsets(text, mode="sentence", use_spacy=False)
+
+        for seg in segments:
+            assert text[seg.char_start : seg.char_end] == seg.text
+
+    def test_exact_slice_with_trailing_whitespace(self) -> None:
+        """Test exact-slice with trailing whitespace."""
+        text = "Hello world.   \n\n   New paragraph.   "
+        segments = split_with_offsets(text, mode="sentence", use_spacy=False)
+
+        for seg in segments:
+            assert text[seg.char_start : seg.char_end] == seg.text
+
+    def test_exact_slice_with_multiple_spaces(self) -> None:
+        """Test exact-slice with multiple spaces between words."""
+        text = "Hello    world.    How   are   you?"
+        segments = split_with_offsets(text, mode="sentence", use_spacy=False)
+
+        for seg in segments:
+            assert text[seg.char_start : seg.char_end] == seg.text
+
+    def test_exact_slice_with_newlines_and_tabs(self) -> None:
+        """Test exact-slice with newlines and tabs."""
+        text = "Hello\tworld.\n\nHow\tare\tyou?"
+        segments = split_with_offsets(text, mode="sentence", use_spacy=False)
+
+        for seg in segments:
+            assert text[seg.char_start : seg.char_end] == seg.text
+
+    def test_exact_slice_with_max_chars_small(self) -> None:
+        """Test exact-slice invariant when max_chars is smaller than average word."""
+        text = "This is a very long sentence that needs splitting."
+        segments = split_with_offsets(text, max_chars=10, use_spacy=False)
+
+        # All segments should be <= 10 chars
+        assert all(len(seg.text) <= 10 for seg in segments)
+
+        # Exact-slice invariant must hold
+        for seg in segments:
+            assert text[seg.char_start : seg.char_end] == seg.text
+
+    def test_exact_slice_with_max_chars_exact_boundary(self) -> None:
+        """Test exact-slice when max_chars equals a word boundary."""
+        text = "word1 word2 word3 word4 word5"
+        max_chars = 12  # Exactly fits "word1 word2 "
+        segments = split_with_offsets(text, max_chars=max_chars, use_spacy=False)
+
+        for seg in segments:
+            assert text[seg.char_start : seg.char_end] == seg.text
+
+    def test_exact_slice_with_max_chars_multiple_subsegments(self) -> None:
+        """Test exact-slice when segment splits into multiple subsegments."""
+        # Create a long sentence
+        text = "word " * 50  # 250 characters
+        segments = split_with_offsets(text.strip(), max_chars=30, use_spacy=False)
+
+        # Should have multiple subsegments
+        assert len(segments) > 5
+
+        # All must maintain invariant
+        for seg in segments:
+            assert text.strip()[seg.char_start : seg.char_end] == seg.text
+
+    def test_exact_slice_recomposition(self) -> None:
+        """Test that segments can be used to reconstruct original text."""
+        text = "First sentence. Second sentence.\n\nNew paragraph here."
+        segments = split_with_offsets(text, mode="sentence", use_spacy=False)
+
+        # Sort by char_start (should already be sorted)
+        segments_sorted = sorted(segments, key=lambda s: s.char_start)
+
+        # Reconstruct by extracting each segment using offsets
+        reconstructed_parts = []
+        last_end = 0
+
+        for seg in segments_sorted:
+            # Add any gap between segments
+            if seg.char_start > last_end:
+                reconstructed_parts.append(text[last_end : seg.char_start])
+
+            # Add segment text via offset
+            reconstructed_parts.append(text[seg.char_start : seg.char_end])
+            last_end = seg.char_end
+
+        # Add any trailing text
+        if last_end < len(text):
+            reconstructed_parts.append(text[last_end:])
+
+        reconstructed = "".join(reconstructed_parts)
+
+        # Should match original exactly
+        assert reconstructed == text
+
+    def test_exact_slice_with_unicode(self) -> None:
+        """Test exact-slice with Unicode characters."""
+        text = "Café résumé. Über große Möbel. 你好世界。"
+        segments = split_with_offsets(text, mode="sentence", use_spacy=False)
+
+        for seg in segments:
+            assert text[seg.char_start : seg.char_end] == seg.text
+
+    def test_exact_slice_determinism(self) -> None:
+        """Test that exact same segments are produced across multiple runs."""
+        text = "Hello world. How are you?\n\nNew paragraph."
+
+        # Run multiple times
+        runs = [
+            split_with_offsets(text, mode="sentence", use_spacy=False) for _ in range(3)
+        ]
+
+        # All runs should produce identical results
+        for i in range(1, len(runs)):
+            assert len(runs[0]) == len(runs[i])
+            for seg1, seg2 in zip(runs[0], runs[i], strict=False):
+                assert seg1.id == seg2.id
+                assert seg1.text == seg2.text
+                assert seg1.char_start == seg2.char_start
+                assert seg1.char_end == seg2.char_end
+                # Verify invariant
+                assert text[seg1.char_start : seg1.char_end] == seg1.text
+
+    def test_exact_slice_with_max_chars_determinism(self) -> None:
+        """Test determinism with max_chars splitting."""
+        text = "word " * 100
+
+        # Run multiple times
+        runs = [
+            split_with_offsets(text.strip(), max_chars=50, use_spacy=False)
+            for _ in range(3)
+        ]
+
+        # All runs should produce identical results
+        for i in range(1, len(runs)):
+            assert len(runs[0]) == len(runs[i])
+            for seg1, seg2 in zip(runs[0], runs[i], strict=False):
+                assert seg1.id == seg2.id
+                assert seg1.text == seg2.text
+                assert seg1.char_start == seg2.char_start
+                assert seg1.char_end == seg2.char_end
+
+    def test_exact_slice_empty_after_trimming(self) -> None:
+        """Test that whitespace-only segments are handled correctly."""
+        text = "Hello.   \n\n\n   World."
+        segments = split_with_offsets(text, mode="sentence", use_spacy=False)
+
+        # All segments should have non-whitespace content or be exact slices
+        for seg in segments:
+            assert text[seg.char_start : seg.char_end] == seg.text
+            # Segments shouldn't be purely whitespace
+            assert seg.text.strip(), f"Empty segment: {seg.id}"
+
+    def test_exact_slice_with_spacy_backend(self) -> None:
+        """Test exact-slice invariant with spaCy backend."""
+        pytest.importorskip("spacy")
+
+        text = "Dr. Smith is here. She has a Ph.D. in Chemistry."
+        segments = split_with_offsets(text, mode="sentence", use_spacy=True)
+
+        for seg in segments:
+            assert text[seg.char_start : seg.char_end] == seg.text
+
+    def test_exact_slice_with_max_chars_spacy(self) -> None:
+        """Test exact-slice with max_chars using spaCy backend."""
+        pytest.importorskip("spacy")
+
+        text = "This is a very long sentence that will be split. " * 5
+        segments = split_with_offsets(text.strip(), max_chars=40, use_spacy=True)
+
+        for seg in segments:
+            assert text.strip()[seg.char_start : seg.char_end] == seg.text
+            assert len(seg.text) <= 40

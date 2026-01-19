@@ -130,6 +130,73 @@ Available modes:
 - `"sentence"`: Returns sentences with paragraph index
 - `"clause"`: Returns clauses with paragraph and sentence indices
 
+### Offset-Preserving Segmentation
+
+For TTS pipelines, markup processing, and token alignment where exact character
+positions are critical, use `split_with_offsets()`:
+
+```python
+from phrasplit import split_with_offsets
+
+text = "Hello world. How are you?\n\nNew paragraph."
+segments = split_with_offsets(text, mode="sentence")
+
+for seg in segments:
+    # Exact-slice invariant: text[char_start:char_end] == seg.text
+    assert text[seg.char_start:seg.char_end] == seg.text
+    print(f"{seg.id}: {seg.text!r} [{seg.char_start}:{seg.char_end}]")
+
+# Output:
+# p0s0: 'Hello world.' [0:12]
+# p0s1: 'How are you?' [13:25]
+# p1s0: 'New paragraph.' [27:41]
+```
+
+**Exact-Slice Policy**
+
+`split_with_offsets()` implements an exact-slice policy that guarantees:
+
+- `segment.text == text[segment.char_start:segment.char_end]` **always** holds
+- No whitespace stripping or normalization breaks this mapping
+- Offsets are safe for span slicing, token alignment, and markup integration
+- Deterministic and stable across runs
+
+**Safety Splitting with `max_chars`**
+
+```python
+long_text = "word " * 100
+segments = split_with_offsets(long_text, max_chars=50)
+
+# All segments respect max length
+assert all(len(seg.text) <= 50 for seg in segments)
+
+# Exact-slice invariant still holds
+assert all(long_text[s.char_start:s.char_end] == s.text for s in segments)
+
+# IDs are stable: "p0s0:m0", "p0s0:m1", etc.
+print([s.id for s in segments])
+```
+
+**Integration with SSMD and Markup**
+
+```python
+from phrasplit import split_with_offsets, validate_no_placeholder_breaks, COMMON_PATTERNS
+
+# Example: segment text with SSMD markup
+text_with_markup = "Hello [world]{lang='de'}. How are you?"
+
+# Option 1: Segment first, then validate
+segments = split_with_offsets(text_with_markup, mode="sentence")
+warnings = validate_no_placeholder_breaks(
+    text_with_markup,
+    segments,
+    placeholder_pattern=COMMON_PATTERNS["ssmd"]
+)
+
+# Option 2: Escape markup, segment, then unescape each segment
+# (See docs/offsets.rst for detailed workflow)
+```
+
 ### Command Line Interface
 
 ```bash

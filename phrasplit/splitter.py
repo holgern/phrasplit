@@ -1191,6 +1191,115 @@ def _make_segment_id(
     return f"p{paragraph_idx}s{sentence_idx}c{clause_idx}"
 
 
+def _simple_sentence_split_preserving_offsets(
+    text: str, language_model: str = "en"
+) -> list[tuple[str, int, int]]:
+    """Split text into sentences using simple regex, preserving exact character offsets.
+
+    This is a minimal sentence splitter for offset-preserving segmentation.
+    It does NO preprocessing or normalization - works on raw text only.
+
+    Args:
+        text: Raw text to split (no preprocessing!)
+        language_model: Language model for abbreviation handling
+
+    Returns:
+        List of (sentence_text, start_offset, end_offset) tuples
+        where text[start:end] == sentence_text (exact-slice invariant)
+    """
+    if not text:
+        return []
+
+    # Get abbreviations for this language to avoid splitting on "Dr.", etc.
+    # But DO split on sentence-ending abbreviations like "Inc.", "Ltd."
+    abbreviations = get_abbreviations(language_model)
+    sentence_ending_abbrevs = get_sentence_ending_abbreviations()
+
+    # Split on sentence-ending punctuation followed by space and capital
+    sentence_pattern = re.compile(r"([.!?]+)\s+(?=[A-Z])")
+
+    sentences = []
+    last_end = 0
+
+    for match in sentence_pattern.finditer(text):
+        # Check if this match is preceded by an abbreviation
+        # Look backward from the period to see if it's part of an abbreviation
+        match_start = match.start()
+        is_abbreviation = False
+
+        # The period is at match_start, so we look backward from there
+        # Abbreviations are stored without periods, e.g., "Dr", "Inc"
+        for abbrev in abbreviations:
+            # Look back from the period to see if abbreviation matches
+            abbrev_len = len(abbrev)
+            if match_start >= abbrev_len:
+                # Check if the text before the period matches the abbreviation
+                candidate = text[match_start - abbrev_len : match_start]
+                if candidate == abbrev:
+                    # Found an abbreviation, but check if it's sentence-ending
+                    if abbrev not in sentence_ending_abbrevs:
+                        is_abbreviation = True
+                    break
+
+        # Skip this match if it's a non-sentence-ending abbreviation
+        if is_abbreviation:
+            continue
+
+        # Match end is after the punctuation and whitespace
+        # We want to include the punctuation but split after the whitespace
+        sent_end = match.end()
+        sent_text = text[last_end:sent_end].strip()
+
+        if sent_text:
+            # Find the exact slice in original text
+            # We need to adjust for stripping
+            sent_start = last_end
+            # Skip leading whitespace
+            while sent_start < sent_end and text[sent_start].isspace():
+                sent_start += 1
+            # Adjust end to exclude trailing whitespace
+            sent_end_adjusted = sent_end
+            while (
+                sent_end_adjusted > sent_start and text[sent_end_adjusted - 1].isspace()
+            ):
+                sent_end_adjusted -= 1
+
+            if sent_start < sent_end_adjusted:
+                sentences.append(
+                    (text[sent_start:sent_end_adjusted], sent_start, sent_end_adjusted)
+                )
+
+        last_end = sent_end
+
+    # Add final sentence
+    if last_end < len(text):
+        sent_text = text[last_end:].strip()
+        if sent_text:
+            # Find exact slice
+            sent_start = last_end
+            while sent_start < len(text) and text[sent_start].isspace():
+                sent_start += 1
+            sent_end = len(text)
+            while sent_end > sent_start and text[sent_end - 1].isspace():
+                sent_end -= 1
+
+            if sent_start < sent_end:
+                sentences.append((text[sent_start:sent_end], sent_start, sent_end))
+
+    # Fallback: if no sentences found, return the whole text as one sentence
+    if not sentences and text.strip():
+        sent_start = 0
+        while sent_start < len(text) and text[sent_start].isspace():
+            sent_start += 1
+        sent_end = len(text)
+        while sent_end > sent_start and text[sent_end - 1].isspace():
+            sent_end -= 1
+        if sent_start < sent_end:
+            sentences.append((text[sent_start:sent_end], sent_start, sent_end))
+
+    return sentences
+
+
 def _split_with_offsets_regex(
     text: str,
     language_model: str = "en_core_web_sm",
@@ -1215,7 +1324,6 @@ def _split_with_offsets_regex(
         )
 
     # Import regex-based functions
-    from phrasplit.splitter_without_spacy import split_sentences_simple
 
     result: list[SplitSegment] = []
 
@@ -1228,14 +1336,20 @@ def _split_with_offsets_regex(
     para_idx = 0
     for i, para_start in enumerate(para_starts):
         para_end = para_starts[i + 1] if i + 1 < len(para_starts) else len(text)
-        para_text = text[para_start:para_end].strip()
+
+        # Skip leading whitespace
+        while para_start < para_end and text[para_start].isspace():
+            para_start += 1
+
+        # Skip trailing whitespace
+        while para_end > para_start and text[para_end - 1].isspace():
+            para_end -= 1
+
+        # Extract exact slice (no .strip() needed since we adjusted offsets)
+        para_text = text[para_start:para_end]
 
         if not para_text:
             continue
-
-        # Adjust para_start to account for stripped whitespace
-        while para_start < para_end and text[para_start].isspace():
-            para_start += 1
 
         if mode == "paragraph":
             seg_id = _make_segment_id(para_idx, 0)
@@ -1253,23 +1367,17 @@ def _split_with_offsets_regex(
             para_idx += 1
             continue
 
-        # For sentence and clause modes, split further
-        sentences = split_sentences_simple(para_text, language_model)
+        # For sentence and clause modes, use offset-preserving sentence split
+        # This avoids preprocessing that would break the exact-slice invariant
+        sentences_with_offsets = _simple_sentence_split_preserving_offsets(
+            para_text, language_model
+        )
 
-        # Track sentence offsets within paragraph
         sent_idx = 0
-        search_start = 0
-
-        for sent_text in sentences:
-            # Find sentence in paragraph text
-            sent_offset = para_text.find(sent_text, search_start)
-            if sent_offset == -1:
-                # Fallback: use search_start
-                sent_offset = search_start
-
-            sent_start = para_start + sent_offset
-            sent_end = sent_start + len(sent_text)
-            search_start = sent_offset + len(sent_text)
+        for sent_text, sent_offset_in_para, sent_end_in_para in sentences_with_offsets:
+            # Calculate absolute offsets
+            sent_start = para_start + sent_offset_in_para
+            sent_end = para_start + sent_end_in_para
 
             if mode == "sentence":
                 seg_id = _make_segment_id(para_idx, sent_idx)
@@ -1356,14 +1464,20 @@ def _split_with_offsets_spacy(
     para_idx = 0
     for i, para_start in enumerate(para_starts):
         para_end = para_starts[i + 1] if i + 1 < len(para_starts) else len(text)
-        para_text = text[para_start:para_end].strip()
+
+        # Skip leading whitespace
+        while para_start < para_end and text[para_start].isspace():
+            para_start += 1
+
+        # Skip trailing whitespace
+        while para_end > para_start and text[para_end - 1].isspace():
+            para_end -= 1
+
+        # Extract exact slice (no .strip() needed since we adjusted offsets)
+        para_text = text[para_start:para_end]
 
         if not para_text:
             continue
-
-        # Adjust para_start to account for stripped whitespace
-        while para_start < para_end and text[para_start].isspace():
-            para_start += 1
 
         if mode == "paragraph":
             seg_id = _make_segment_id(para_idx, 0)
@@ -1381,22 +1495,29 @@ def _split_with_offsets_spacy(
             para_idx += 1
             continue
 
-        # Process with spaCy
+        # Process with spaCy on the exact paragraph text
         protected_para = _protect_ellipsis(para_text)
         doc = nlp(protected_para)
 
         sent_idx = 0
         for sent in doc.sents:
-            sent_text = _restore_ellipsis(sent.text.strip())
+            # Use spaCy's character offsets directly (relative to protected_para)
+            # These point to the exact slice in protected_para
+            sent_start_in_para = sent.start_char
+            sent_end_in_para = sent.end_char
 
-            if not sent_text:
+            # Extract exact slice from protected_para
+            sent_text_protected = protected_para[sent_start_in_para:sent_end_in_para]
+
+            # Restore ellipsis to get original text
+            sent_text = _restore_ellipsis(sent_text_protected)
+
+            if not sent_text or sent_text.isspace():
                 continue
 
-            # Calculate absolute character offsets
-            # sent.start_char and sent.end_char are relative to protected_para
-            # We need to find the actual position in original text
-            sent_start = para_start + para_text.find(sent_text)
-            sent_end = sent_start + len(sent_text)
+            # Calculate absolute character offsets in original text
+            sent_start = para_start + sent_start_in_para
+            sent_end = para_start + sent_end_in_para
 
             if mode == "sentence":
                 seg_id = _make_segment_id(para_idx, sent_idx)
@@ -1452,7 +1573,16 @@ def _split_with_offsets_spacy(
 def _apply_max_chars_split(
     original_text: str, segments: list[SplitSegment], max_chars: int
 ) -> list[SplitSegment]:
-    """Split segments that exceed max_chars while preserving offsets.
+    """Split segments that exceed max_chars while preserving exact offsets.
+
+    Implements the exact-slice policy:
+        segment.text == original_text[char_start:char_end]
+
+    Strategy for splitting:
+    1. Try to split at whitespace or punctuation boundaries near max_chars
+    2. Never use .strip() - preserve exact slices
+    3. Offsets always match the exact positions in original text
+    4. Skip whitespace-only chunks by advancing boundaries
 
     Args:
         original_text: The original input text
@@ -1460,7 +1590,7 @@ def _apply_max_chars_split(
         max_chars: Maximum character length for any segment
 
     Returns:
-        New list of segments with long segments split
+        New list of segments with long segments split, maintaining exact-slice invariant
     """
     result: list[SplitSegment] = []
 
@@ -1470,54 +1600,65 @@ def _apply_max_chars_split(
             continue
 
         # Need to split this segment
-        # Strategy: split on whitespace or punctuation, fallback to hard split
-        text = seg.text
+        # Strategy: split on whitespace or punctuation, never strip
         pos = 0
         sub_idx = 0
 
-        while pos < len(text):
-            # Find a good split point within max_chars
-            end_pos = min(pos + max_chars, len(text))
+        while pos < len(seg.text):
+            # Skip leading whitespace to avoid whitespace-only chunks
+            while pos < len(seg.text) and seg.text[pos].isspace():
+                pos += 1
 
-            if end_pos < len(text):
+            if pos >= len(seg.text):
+                break
+
+            # Find a good split point within max_chars
+            end_pos = min(pos + max_chars, len(seg.text))
+
+            if end_pos < len(seg.text):
                 # Try to find whitespace or punctuation boundary
                 # Look backwards from end_pos
-                split_pos = end_pos
                 for i in range(end_pos - 1, pos, -1):
-                    if text[i] in " \t\n,;.!?":
-                        split_pos = i + 1
+                    if seg.text[i] in " \t\n,;.!?":
+                        end_pos = i + 1
                         break
-                end_pos = split_pos
 
-            chunk = text[pos:end_pos].strip()
-            if chunk:
-                # Calculate absolute offsets
-                chunk_start = seg.char_start + pos
-                chunk_end = chunk_start + len(chunk)
+            # Extract chunk WITHOUT stripping - exact slice
+            chunk = seg.text[pos:end_pos]
 
-                # Generate ID with sub-index if needed
-                if sub_idx == 0:
-                    chunk_id = seg.id
-                else:
-                    chunk_id = f"{seg.id}_chunk{sub_idx}"
+            # Skip if chunk is only whitespace (advance pos and continue)
+            if not chunk or chunk.isspace():
+                pos = end_pos
+                continue
 
-                chunk_seg = SplitSegment(
-                    id=chunk_id,
-                    text=chunk,
-                    char_start=chunk_start,
-                    char_end=chunk_end,
-                    paragraph_idx=seg.paragraph_idx,
-                    sentence_idx=seg.sentence_idx,
-                    clause_idx=seg.clause_idx,
-                    meta={**seg.meta, "split_by_max_chars": True},
-                )
-                result.append(chunk_seg)
-                sub_idx += 1
+            # Calculate absolute offsets in original text
+            chunk_start = seg.char_start + pos
+            chunk_end = seg.char_start + end_pos
 
+            # Generate stable ID with sub-index
+            # Use :m{index} suffix for max-chars splits (m = "max-chars")
+            if sub_idx == 0:
+                chunk_id = f"{seg.id}:m0"
+            else:
+                chunk_id = f"{seg.id}:m{sub_idx}"
+
+            chunk_seg = SplitSegment(
+                id=chunk_id,
+                text=chunk,
+                char_start=chunk_start,
+                char_end=chunk_end,
+                paragraph_idx=seg.paragraph_idx,
+                sentence_idx=seg.sentence_idx,
+                clause_idx=seg.clause_idx,
+                meta={
+                    **seg.meta,
+                    "split_by_max_chars": True,
+                    "max_chars_index": sub_idx,
+                },
+            )
+            result.append(chunk_seg)
+            sub_idx += 1
             pos = end_pos
-            # Skip whitespace
-            while pos < len(text) and text[pos].isspace():
-                pos += 1
 
     return result
 
@@ -1533,14 +1674,27 @@ def split_with_offsets(
     """Split text into segments with character offsets and stable IDs.
 
     This is the main API for offset-preserving segmentation, designed for
-    downstream processing.
+    downstream processing where exact character positions are critical.
+
+    **Exact-Slice Policy**
+
+    This function implements the exact-slice policy: for every returned segment,
+    the following invariant ALWAYS holds:
+
+        segment.text == text[segment.char_start:segment.char_end]
+
+    This guarantee means:
+    - Offsets map precisely to the original input text
+    - No whitespace normalization or stripping breaks the mapping
+    - Downstream code can reliably use offsets for span slicing
+    - Integration with token alignment and markup slicing is safe
 
     Key features:
     - Returns segments with precise character offsets (char_start, char_end)
     - Generates stable, hierarchical IDs (e.g., "p0s1", "p0s2c3")
-    - Offsets map exactly to the original input text
+    - Maintains exact-slice invariant in all modes
     - Supports both spaCy (accurate) and regex (fast) backends
-    - Optional max_chars safety splitting
+    - Optional max_chars safety splitting with deterministic boundaries
 
     Args:
         text: Input text to split
@@ -1555,12 +1709,14 @@ def split_with_offsets(
         language_model: Language model name (e.g., "en_core_web_sm", "de_core_news_sm")
             Used for both spaCy model selection and abbreviation handling
         max_chars: Optional maximum segment length. Segments exceeding this
-            will be split further at whitespace/punctuation boundaries
+            will be split further at whitespace/punctuation boundaries while
+            maintaining the exact-slice invariant. Split segments get IDs
+            like "p0s1:m0", "p0s1:m1", etc.
 
     Returns:
         List of SplitSegment objects, each containing:
-            - id: Stable identifier (e.g., "p0s1c2")
-            - text: Segment text content
+            - id: Stable identifier (e.g., "p0s1c2" or "p0s1:m0")
+            - text: Segment text content (exact slice of input)
             - char_start, char_end: Character offsets in original text
             - paragraph_idx, sentence_idx, clause_idx: Hierarchical indices
             - meta: Additional metadata (method, mode, etc.)
@@ -1573,8 +1729,9 @@ def split_with_offsets(
         >>> text = "Hello world. How are you?\\n\\nNew paragraph."
         >>> segments = split_with_offsets(text, mode="sentence")
         >>> for seg in segments:
-        ...     print(f"{seg.id}: {seg.text!r}")
+        ...     # Verify exact-slice invariant
         ...     assert text[seg.char_start:seg.char_end] == seg.text
+        ...     print(f"{seg.id}: {seg.text!r}")
         p0s0: 'Hello world.'
         p0s1: 'How are you?'
         p1s0: 'New paragraph.'
@@ -1584,10 +1741,15 @@ def split_with_offsets(
         >>> segments = split_with_offsets(long_text, max_chars=50)
         >>> all(len(seg.text) <= 50 for seg in segments)
         True
+        >>> # Exact-slice invariant still holds
+        >>> all(long_text[s.char_start:s.char_end] == s.text for s in segments)
+        True
 
     Note:
-        - Offsets preserve exact input text, including whitespace
-        - IDs are stable across runs with same input and settings
+        - Segments may include leading/trailing whitespace from the original text
+        - IDs are stable and deterministic across runs with same input and settings
+        - For SSMD/markup integration, offsets are in the coordinate space of the
+          input text (before or after escaping, depending on your workflow)
     """
     if max_chars is not None and max_chars < 1:
         raise ValueError(f"max_chars must be at least 1, got {max_chars}")
