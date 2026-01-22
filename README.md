@@ -18,6 +18,7 @@ between spaCy NLP for best accuracy or fast regex-based splitting for simple use
 - **Long line splitting**: Break long lines at sentence/clause boundaries
 - **Abbreviation handling**: Correctly handles Mr., Dr., U.S.A., etc.
 - **Ellipsis support**: Preserves ellipses without incorrect splitting
+- **Offset-preserving segmentation**: Exact-slice offsets with stable IDs
 - **25+ languages**: Multi-language abbreviation support
 
 ## Installation
@@ -160,6 +161,8 @@ for seg in segments:
 - No whitespace stripping or normalization breaks this mapping
 - Offsets are safe for span slicing, token alignment, and markup integration
 - Deterministic and stable across runs
+- Offsets are computed against the original input text
+- Offsets are monotonic and non-overlapping
 
 **Safety Splitting with `max_chars`**
 

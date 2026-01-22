@@ -11,8 +11,9 @@ Key Features
 
 1. **Character Offsets**: Each segment includes ``char_start`` and ``char_end`` that map exactly to the original input
 2. **Stable IDs**: Hierarchical identifiers (e.g., ``p0s1c2``) that are stable across runs
-3. **Whitespace Preservation**: Offsets preserve exact input text, including whitespace
-4. **Backend Agnostic**: Works with both spaCy (accurate) and regex (fast) backends
+3. **Exact Slices**: Segment text always equals the exact input slice (no normalization)
+4. **Monotonic Offsets**: Segments are ordered with non-overlapping ranges
+5. **Backend Agnostic**: Works with both spaCy (accurate) and regex (fast) backends
 
 Coordinate System
 -----------------
@@ -51,20 +52,36 @@ This holds true even with:
 - Unicode characters
 - Whitespace variations
 
+Offsets are always computed against the original input text, even when the
+splitter applies internal corrections (ellipsis protection, abbreviation fixes).
+
+**Monotonic, Non-Overlapping Offsets**
+
+Segments are emitted in document order and do not overlap:
+
+.. code-block:: python
+
+    last_end = 0
+    for seg in segments:
+        assert seg.char_start >= last_end
+        last_end = seg.char_end
+
+**Runtime Validation**
+
+``split_with_offsets()`` validates its output (bounds, exact-slice, and ordering).
+If any invariant is violated, it raises ``ValueError`` with details about the
+invalid segment.
+
 **Whitespace Handling**
 
-The API preserves exact character positions while normalizing whitespace in segment text:
-
-- Paragraph text is stripped of leading/trailing whitespace
-- Sentence text is stripped
-- Offsets still point to the exact positions in the original text
-
-This means you may need to use ``.strip()`` when comparing:
+Segment text is always an exact slice of the original input. The splitter skips
+leading/trailing whitespace at paragraph and sentence boundaries, so whitespace
+between segments may be excluded. Compare offsets using direct equality:
 
 .. code-block:: python
 
     extracted = text[segment.char_start:segment.char_end]
-    assert segment.text.strip() == extracted.strip()
+    assert segment.text == extracted
 
 Usage Examples
 --------------
@@ -82,7 +99,7 @@ Basic Usage
     for seg in segments:
         print(f"{seg.id}: {seg.text}")
         # Verify offset
-        assert text[seg.char_start:seg.char_end].strip() == seg.text.strip()
+        assert text[seg.char_start:seg.char_end] == seg.text
 
 Modes
 ~~~~~
@@ -135,7 +152,7 @@ Max Length Splitting
 
     # Offsets still work correctly
     for seg in segments:
-        assert text[seg.char_start:seg.char_end].strip() == seg.text.strip()
+        assert text[seg.char_start:seg.char_end] == seg.text
 
 Working with Offsets
 --------------------
@@ -235,33 +252,26 @@ Unicode and Special Characters
 
     # Offsets work correctly with multibyte characters
     for seg in segments:
-        assert text[seg.char_start:seg.char_end].strip() == seg.text.strip()
+        assert text[seg.char_start:seg.char_end] == seg.text
 
-Trimming Behavior
------------------
+Boundary Whitespace
+-------------------
 
-Understanding when text is trimmed:
+Segments are anchored to the first and last non-whitespace characters inside each
+paragraph. Whitespace between paragraphs or sentences may not be included in any
+segment, but the exact-slice invariant always holds.
 
 .. code-block:: python
 
     text = "  Hello.  \\n\\n  World.  "
     segments = split_with_offsets(text, mode="sentence")
 
-    # Segment text is trimmed
     assert segments[0].text == "Hello."
     assert segments[1].text == "World."
 
-    # But offsets may include surrounding whitespace
-    # The exact behavior depends on the backend and preprocessing
-
-Best practice: Always verify offset mapping when precision is critical:
-
-.. code-block:: python
-
     for seg in segments:
-        # Use strip() to handle whitespace variations
-        extracted = text[seg.char_start:seg.char_end].strip()
-        assert seg.text.strip() == extracted
+        extracted = text[seg.char_start:seg.char_end]
+        assert seg.text == extracted
 
 Integration with Markup Languages
 ----------------------------------

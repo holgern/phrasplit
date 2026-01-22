@@ -26,6 +26,7 @@ This is called the **exact-slice policy**.
 3. **Whitespace Preserved**: Leading/trailing whitespace from the original text is
    included
 4. **Safe for Slicing**: You can reliably extract segments using Python slicing
+5. **Monotonic Order**: Segments are emitted in order with non-overlapping ranges
 
 ### Example
 

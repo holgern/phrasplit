@@ -77,7 +77,7 @@ Offset guarantees are identical to ``split_with_offsets()``:
 
     for segment in iter_split_with_offsets(text):
         # Offsets map exactly to original text
-        assert text[segment.char_start:segment.char_end].strip() == segment.text.strip()
+        assert text[segment.char_start:segment.char_end] == segment.text
 
 Usage Examples
 --------------

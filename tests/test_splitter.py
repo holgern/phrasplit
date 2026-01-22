@@ -44,9 +44,10 @@ class TestSplitSentences:
         Ellipses should be preserved in their original format and should NOT
         cause sentence splitting on their own.
         """
-        text = "Hello... Is it working? Yes... it is!"
+        text = "'Hello...' 'Is it working?' Yes... it is!"
         result = split_sentences(text)
         # Ellipsis should be preserved as ... (not transformed to . . .)
+        assert len(result) == 3
         assert any("..." in s for s in result)
         # Should not contain spaced ellipsis (that would indicate transformation)
         assert not any(". . ." in s for s in result)
@@ -418,7 +419,7 @@ class TestEllipsisHandling:
         text = "Hello..... world"
         result = _protect_ellipsis(text)
         assert "....." not in result
-        # Long dots use prefix + count encoding
+        # Long dots use repeated placeholder characters
         assert "\ue004" in result
 
     def test_protect_spaced_ellipsis(self) -> None:

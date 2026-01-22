@@ -172,6 +172,15 @@ def split_sentences_simple(
         # Pad text for easier pattern matching
         text = f" {text.strip()}  "
 
+        # If an ellipsis clearly ends a sentence, mark a boundary *before* we
+        # protect ellipsis dots (which would otherwise remove '.'
+        # and hide the boundary).
+        text = re.sub(
+            r'((?:\.{3,}|\.\s\.\s\.|…)(?:["\'\)\]\}\u201d\u2019]+)?)\s+(?=["\'\u201c\u201d\u2018\u2019]*[A-Z])',
+            r"\1" + _SENTENCE_BOUNDARY + " ",
+            text,
+        )
+
         # Protect ellipsis (reuse from main splitter)
         text = _protect_ellipsis(text)
 

@@ -59,7 +59,7 @@ _ELLIPSIS_3_PLACEHOLDER = "\ue000"  # 3 dots: ...
 _ELLIPSIS_4_PLACEHOLDER = "\ue001"  # 4 dots: ....
 _ELLIPSIS_SPACED_PLACEHOLDER = "\ue002"  # Spaced: . . .
 _ELLIPSIS_UNICODE_PLACEHOLDER = "\ue003"  # Unicode ellipsis: …
-_ELLIPSIS_LONG_PREFIX = "\ue004"  # Prefix for 5+ dots (followed by count digit)
+_ELLIPSIS_LONG_PREFIX = "\ue004"  # Placeholder for 5+ dots (repeat per dot)
 
 # Regex for hyphenated line breaks (e.g., "recom-\nmendation" -> "recommendation")
 _HYPHENATED_LINEBREAK = re.compile(r"(\w+)-\s*\n\s*(\w+)")
@@ -145,31 +145,33 @@ def _protect_ellipsis(text: str) -> str:
     - Unicode ellipsis: U+2026 (single ellipsis character)
 
     Each pattern is replaced with a unique placeholder that preserves information
-    about the original format, allowing exact restoration later.
+    about the original format, allowing exact restoration later. Placeholders
+    preserve length to keep offsets aligned with the original input.
     """
 
     # Replace spaced ellipsis first (. . .) - must come before regular dots
-    text = text.replace(". . .", _ELLIPSIS_SPACED_PLACEHOLDER)
+    spaced_placeholder = (
+        f"{_ELLIPSIS_SPACED_PLACEHOLDER} "
+        f"{_ELLIPSIS_SPACED_PLACEHOLDER} "
+        f"{_ELLIPSIS_SPACED_PLACEHOLDER}"
+    )
+    text = text.replace(". . .", spaced_placeholder)
 
     # Replace unicode ellipsis
     text = text.replace("\u2026", _ELLIPSIS_UNICODE_PLACEHOLDER)
 
-    # Replace longer dot sequences first (5+ dots), encoding the count
-    # Use offset of 0xE010 (private use area) to avoid control characters
-    # chr(0) - chr(31) are control chars, chr(9) is tab, chr(10) is newline
+    # Replace longer dot sequences first (5+ dots), preserving length
     def replace_long_dots(match: re.Match[str]) -> str:
         count = len(match.group(0))
-        # Encode count in private use area: U+E010 + count
-        # This avoids control characters and whitespace
-        return _ELLIPSIS_LONG_PREFIX + chr(0xE010 + count)
+        return _ELLIPSIS_LONG_PREFIX * count
 
     text = re.sub(r"\.{5,}", replace_long_dots, text)
 
     # Replace 4 dots
-    text = text.replace("....", _ELLIPSIS_4_PLACEHOLDER)
+    text = text.replace("....", _ELLIPSIS_4_PLACEHOLDER * 4)
 
     # Replace 3 dots (must come after 4+ to avoid partial matches)
-    text = text.replace("...", _ELLIPSIS_3_PLACEHOLDER)
+    text = text.replace("...", _ELLIPSIS_3_PLACEHOLDER * 3)
 
     return text
 
@@ -179,27 +181,23 @@ def _restore_ellipsis(text: str) -> str:
     # Restore in reverse order of protection
 
     # Restore 3 dots
-    text = text.replace(_ELLIPSIS_3_PLACEHOLDER, "...")
+    text = text.replace(_ELLIPSIS_3_PLACEHOLDER * 3, "...")
 
     # Restore 4 dots
-    text = text.replace(_ELLIPSIS_4_PLACEHOLDER, "....")
+    text = text.replace(_ELLIPSIS_4_PLACEHOLDER * 4, "....")
 
     # Restore long dot sequences (5+)
     def restore_long_dots(match: re.Match[str]) -> str:
-        # Decode count from private use area offset
-        count = ord(match.group(1)) - 0xE010
-        return "." * count
+        return "." * len(match.group(0))
 
-    # Use re.DOTALL so (.) matches any character including newline (chr(10))
-    text = re.sub(
-        _ELLIPSIS_LONG_PREFIX + r"(.)", restore_long_dots, text, flags=re.DOTALL
-    )
+    long_pattern = re.compile(re.escape(_ELLIPSIS_LONG_PREFIX) + r"{5,}")
+    text = long_pattern.sub(restore_long_dots, text)
 
     # Restore unicode ellipsis
     text = text.replace(_ELLIPSIS_UNICODE_PLACEHOLDER, "\u2026")
 
     # Restore spaced ellipsis
-    text = text.replace(_ELLIPSIS_SPACED_PLACEHOLDER, ". . .")
+    text = text.replace(_ELLIPSIS_SPACED_PLACEHOLDER, ".")
 
     return text
 
@@ -345,11 +343,12 @@ def _merge_abbreviation_splits(
     return result
 
 
-# Pattern to detect ellipsis followed by a new sentence
-# Matches: 3+ dots OR spaced ellipsis, followed by whitespace,
-# optional quotes, and capital letter
+# Pattern to detect ellipsis followed by a new sentence.
+# Allows closing quotes/brackets immediately after the ellipsis, e.g. "...' Next"
+# so that "'Hello...' 'Is it working?'" can be split after the ellipsis.
 _ELLIPSIS_SENTENCE_BREAK = re.compile(
-    r'(\.{3,}|\. \. \.)\s+(["\'\u201c\u201d\u2018\u2019]*[A-Z])',
+    r'((?:\.{3,}|\. \. \.|…)(?:["\'\)\]\}\u201d\u2019]+)?)\s+'
+    r'(["\'\u201c\u201d\u2018\u2019]*[A-Z])',
 )
 
 
@@ -1191,6 +1190,30 @@ def _make_segment_id(
     return f"p{paragraph_idx}s{sentence_idx}c{clause_idx}"
 
 
+def _validate_offset_segments(text: str, segments: list[SplitSegment]) -> None:
+    """Validate that segments align to the original text offsets."""
+    last_end = 0
+    text_length = len(text)
+
+    for seg in segments:
+        if not (0 <= seg.char_start <= seg.char_end <= text_length):
+            raise ValueError(
+                "Segment offsets out of bounds for "
+                f"{seg.id}: {seg.char_start}-{seg.char_end}"
+            )
+        if text[seg.char_start : seg.char_end] != seg.text:
+            raise ValueError(
+                "Segment text does not match slice for "
+                f"{seg.id}: {seg.char_start}-{seg.char_end}"
+            )
+        if seg.char_start < last_end:
+            raise ValueError(
+                "Segments overlap or are out of order at "
+                f"{seg.id}: {seg.char_start} < {last_end}"
+            )
+        last_end = seg.char_end
+
+
 def _simple_sentence_split_preserving_offsets(
     text: str, language_model: str = "en"
 ) -> list[tuple[str, int, int]]:
@@ -1506,11 +1529,8 @@ def _split_with_offsets_spacy(
             sent_start_in_para = sent.start_char
             sent_end_in_para = sent.end_char
 
-            # Extract exact slice from protected_para
-            sent_text_protected = protected_para[sent_start_in_para:sent_end_in_para]
-
-            # Restore ellipsis to get original text
-            sent_text = _restore_ellipsis(sent_text_protected)
+            # Extract exact slice from original paragraph
+            sent_text = para_text[sent_start_in_para:sent_end_in_para]
 
             if not sent_text or sent_text.isspace():
                 continue
@@ -1765,9 +1785,12 @@ def split_with_offsets(
         )
 
     if use_spacy:
-        return _split_with_offsets_spacy(text, language_model, mode, max_chars)
+        segments = _split_with_offsets_spacy(text, language_model, mode, max_chars)
     else:
-        return _split_with_offsets_regex(text, language_model, mode, max_chars)
+        segments = _split_with_offsets_regex(text, language_model, mode, max_chars)
+
+    _validate_offset_segments(text, segments)
+    return segments
 
 
 def iter_split_with_offsets(
