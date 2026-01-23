@@ -57,6 +57,84 @@ class TestSplitSentences:
         assert len(result) == 1
         assert any("..." in s for s in result)
 
+    def test_abbreviation_merge_with_quotes(self) -> None:
+        """Test merging abbreviations when next sentence starts with quotes."""
+        pytest.importorskip("spacy")
+
+        text = 'Dr. "Smith" arrived.'
+        result = split_sentences(text, use_spacy=True)
+        assert result == ['Dr. "Smith" arrived.']
+
+    def test_abbreviation_merge_with_brackets(self) -> None:
+        """Test merging abbreviations when next sentence starts with brackets."""
+        pytest.importorskip("spacy")
+
+        text = "Prof. (Müller) sagte nein. Dann ging er."
+        result = split_sentences(text, use_spacy=True)
+        assert result[0] == "Prof. (Müller) sagte nein."
+        assert result[1] == "Dann ging er."
+
+    @pytest.mark.parametrize("use_spacy", [False, True])
+    def test_dotted_acronym_us(self, use_spacy: bool) -> None:
+        """Test dotted acronyms like U.S. don't split incorrectly."""
+        if use_spacy:
+            pytest.importorskip("spacy")
+
+        text = "He lives in the U.S. He moved last year."
+        result = split_sentences(text, use_spacy=use_spacy)
+        assert result == ["He lives in the U.S.", "He moved last year."]
+
+    @pytest.mark.parametrize("use_spacy", [False, True])
+    def test_dotted_acronym_locale(self, use_spacy: bool) -> None:
+        """Test locale abbreviations like z.B. are kept intact."""
+        if use_spacy:
+            pytest.importorskip("spacy")
+
+        text = "Das ist z.B. gut. Wirklich."
+        result = split_sentences(text, use_spacy=use_spacy)
+        assert result == ["Das ist z.B. gut.", "Wirklich."]
+
+    @pytest.mark.parametrize("use_spacy", [False, True])
+    def test_urls_with_www_and_domains(self, use_spacy: bool) -> None:
+        """Test URLs with www and bare domains remain intact."""
+        if use_spacy:
+            pytest.importorskip("spacy")
+
+        text = "See www.example.com. It works."
+        result = split_sentences(text, use_spacy=use_spacy)
+        assert result == ["See www.example.com.", "It works."]
+
+        text = "Visit example.com/path). Then continue."
+        result = split_sentences(text, use_spacy=use_spacy)
+        assert result == ["Visit example.com/path).", "Then continue."]
+
+    @pytest.mark.parametrize("use_spacy", [False, True])
+    def test_ellipsis_unicode_and_digits(self, use_spacy: bool) -> None:
+        """Test ellipsis splitting with unicode uppercase and digits."""
+        if use_spacy:
+            pytest.importorskip("spacy")
+
+        text = 'Seine Worte hingen in der Luft... "Ärgerlich." Dann ging er.'
+        result = split_sentences(text, use_spacy=use_spacy)
+        assert result[0] == "Seine Worte hingen in der Luft..."
+        assert result[1].startswith('"Ärgerlich."')
+        assert result[-1] == "Dann ging er."
+
+        text = "Wait... 2025 was wild. True."
+        result = split_sentences(text, use_spacy=use_spacy)
+        assert result[0] == "Wait..."
+        assert result[1].startswith("2025")
+
+    @pytest.mark.parametrize("use_spacy", [False, True])
+    def test_ellipsis_lowercase_no_split(self, use_spacy: bool) -> None:
+        """Test ellipsis does not split before lowercase starts."""
+        if use_spacy:
+            pytest.importorskip("spacy")
+
+        text = "He hesitated... and then spoke."
+        result = split_sentences(text, use_spacy=use_spacy)
+        assert len(result) == 1
+
     def test_common_abbreviations(self) -> None:
         """Test abbreviations like Mr., Prof., U.S.A. that shouldn't split sentences."""
         text = "Mr. Brown met Prof. Green. They discussed the U.S.A. case."
@@ -1041,12 +1119,10 @@ class TestSplitSentencesColonOption:
     def test_split_on_colon_parameter_accepted(self) -> None:
         """Test that split_on_colon parameter is accepted (API compatibility)."""
         text = "Note: This is important."
-        # Both values should work without raising errors
-        result_true = split_sentences(text, split_on_colon=True)
-        result_false = split_sentences(text, split_on_colon=False)
-        # Results depend on spaCy's behavior, not our colon logic
-        assert isinstance(result_true, list)
-        assert isinstance(result_false, list)
+        result_true = split_sentences(text, split_on_colon=True, use_spacy=False)
+        with pytest.warns(DeprecationWarning, match="split_on_colon"):
+            result_false = split_sentences(text, split_on_colon=False, use_spacy=False)
+        assert result_true == result_false
 
     def test_colon_handling_delegated_to_spacy(self) -> None:
         """Test that colon handling is delegated to spaCy."""
@@ -1092,6 +1168,14 @@ class TestSplitUrls:
         sentences = ["Try http://old.com https://new.com for comparison."]
         result = _split_urls(sentences)
         assert len(result) == 2
+
+    def test_www_and_bare_domain_urls(self) -> None:
+        """Test splitting with www and bare domain URLs."""
+        sentences = ["See www.example.com and example.org/path for details."]
+        result = _split_urls(sentences)
+        assert len(result) == 2
+        assert "www.example.com" in result[0]
+        assert "example.org/path" in result[1]
 
     def test_url_at_start(self) -> None:
         """Test URL at start of sentence."""
@@ -1640,15 +1724,15 @@ class TestSplitText:
         """
         text = "This is an important notice: Please read carefully."
 
-        # Both values should work without errors (parameter is accepted but ignored)
-        result_true = split_text(text, mode="sentence", split_on_colon=True)
-        result_false = split_text(text, mode="sentence", split_on_colon=False)
+        result_true = split_text(
+            text, mode="sentence", split_on_colon=True, use_spacy=False
+        )
+        with pytest.warns(DeprecationWarning, match="split_on_colon"):
+            result_false = split_text(
+                text, mode="sentence", split_on_colon=False, use_spacy=False
+            )
 
-        # Results depend on spaCy's behavior - we just verify valid output
-        assert isinstance(result_true, list)
-        assert isinstance(result_false, list)
-        assert len(result_true) >= 1
-        assert len(result_false) >= 1
+        assert [seg.text for seg in result_true] == [seg.text for seg in result_false]
 
     def test_sentence_mode_with_corrections(self) -> None:
         """Test sentence mode respects apply_corrections parameter."""

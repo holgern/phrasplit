@@ -69,21 +69,13 @@ You can explicitly control this with the ``use_spacy`` parameter:
 - You're processing professional/academic content
 - Quality is more important than speed
 
-Colon Splitting
-^^^^^^^^^^^^^^^
+Colon Splitting (Deprecated)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-By default, colons are treated as sentence terminators. This is useful for
-news-style text:
-
-.. code-block:: python
-
-   text = "Breaking News: The event has started."
-   sentences = split_sentences(text)
-   # ['Breaking News:', 'The event has started.']
-
-   # Disable colon splitting if needed
-   sentences = split_sentences(text, split_on_colon=False)
-   # ['Breaking News: The event has started.']
+The ``split_on_colon`` parameter is deprecated and no longer affects output. It
+is accepted for API compatibility and raises a ``DeprecationWarning`` when set
+to ``False``. Colon handling is delegated to the active backend (spaCy or the
+regex fallback).
 
 Splitting Clauses
 -----------------

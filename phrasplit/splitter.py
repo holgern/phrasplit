@@ -65,11 +65,22 @@ _ELLIPSIS_LONG_PREFIX = "\ue004"  # Placeholder for 5+ dots (repeat per dot)
 _HYPHENATED_LINEBREAK = re.compile(r"(\w+)-\s*\n\s*(\w+)")
 
 # URL pattern for splitting
-_URL_PATTERN = re.compile(r"(https?://\S+)")
+_URL_PATTERN = re.compile(
+    r"(?:https?://[^\s\)\]\}\>\"',]+|www\.[^\s\)\]\}\>\"',]+|"
+    r"\b[\w.-]+\.[A-Za-z]{2,}(?:/[^\s\)\]\}\>\"',]*)?)"
+)
 
 # Pattern to detect abbreviation at end of sentence
-# Matches: word ending with period, where word (without period) is in abbreviations
-_ABBREV_END_PATTERN = re.compile(r"(\b[A-Za-z]+)\.\s*$")
+_LETTER_PATTERN = r"[^\W\d_]"
+_ABBREV_END_PATTERN = re.compile(
+    rf"(\b{_LETTER_PATTERN}+(?:\.{_LETTER_PATTERN}+)*)\.\s*$"
+)
+
+_URL_TRAILING_PUNCT = ".,)]}>\"'"
+_OPENING_PUNCTUATION = "\"'([{«„“”‘’"
+_CLOSING_PUNCTUATION = "\"')]}»”’"
+
+_ELLIPSIS_PATTERN = re.compile(r"(?:\.{3,}|(?:\.\s){2,}\.|…)")
 
 # Default maximum chunk size for spaCy processing (will be capped by nlp.max_length)
 _DEFAULT_MAX_CHUNK_SIZE = 500000
@@ -202,6 +213,73 @@ def _restore_ellipsis(text: str) -> str:
     return text
 
 
+def _first_cased_char(text: str) -> str | None:
+    for char in text:
+        if char.isalpha():
+            return char
+    return None
+
+
+def _extract_leading_word(text: str) -> str | None:
+    stripped = text.lstrip().lstrip(_OPENING_PUNCTUATION)
+    if not stripped:
+        return None
+    first_word = stripped.split()[0]
+    return first_word.strip(_CLOSING_PUNCTUATION)
+
+
+def _is_sentence_start(text: str, start: int, *, allow_lowercase: bool = False) -> bool:
+    index = start
+    while index < len(text) and text[index].isspace():
+        index += 1
+    while index < len(text) and text[index] in _OPENING_PUNCTUATION:
+        index += 1
+    while index < len(text):
+        char = text[index]
+        if char.isalpha():
+            if char.isupper():
+                return True
+            return allow_lowercase and char.islower()
+        if char.isdigit():
+            return True
+        if char.isspace() or char in _OPENING_PUNCTUATION:
+            index += 1
+            continue
+        if char in _CLOSING_PUNCTUATION:
+            index += 1
+            continue
+        break
+    return False
+
+
+def _find_ellipsis_split_positions(
+    text: str, *, allow_lowercase: bool = False
+) -> list[int]:
+    positions: list[int] = []
+    for match in _ELLIPSIS_PATTERN.finditer(text):
+        boundary = match.end()
+        while boundary < len(text) and text[boundary] in _CLOSING_PUNCTUATION:
+            boundary += 1
+        if _is_sentence_start(text, boundary, allow_lowercase=allow_lowercase):
+            positions.append(boundary)
+    return positions
+
+
+def _trim_url_bounds(text: str, start: int, end: int) -> tuple[int, int]:
+    while end > start and text[end - 1] in _URL_TRAILING_PUNCT:
+        end -= 1
+    return start, end
+
+
+def _find_url_spans(text: str) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    for match in _URL_PATTERN.finditer(text):
+        start, end = _trim_url_bounds(text, match.start(), match.end())
+        if end > start:
+            spans.append((start, end))
+    return spans
+
+
 def _split_urls(sentences: list[str]) -> list[str]:
     """
     Split sentences that contain multiple URLs.
@@ -218,32 +296,23 @@ def _split_urls(sentences: list[str]) -> list[str]:
     result: list[str] = []
 
     for sent in sentences:
-        # Check if sentence contains URLs
-        if "http://" not in sent and "https://" not in sent:
-            result.append(sent)
-            continue
+        url_spans = _find_url_spans(sent)
 
-        # Count URLs in the sentence
-        url_matches = list(_URL_PATTERN.finditer(sent))
-
-        # Only split if there are multiple URLs
-        if len(url_matches) < 2:
+        if len(url_spans) < 2:
             result.append(sent)
             continue
 
         # Split at URL boundaries - each URL becomes its own "sentence"
         # along with any text that follows it until the next URL
         last_end = 0
-        for i, match in enumerate(url_matches):
+        for i, (url_start, _) in enumerate(url_spans):
             # Text before this URL (only for first URL)
-            if i == 0 and match.start() > 0:
-                prefix = sent[: match.start()].strip()
+            if i == 0 and url_start > 0:
+                prefix = sent[:url_start].strip()
                 if prefix:
                     # Include prefix with first URL
                     next_url_start = (
-                        url_matches[i + 1].start()
-                        if i + 1 < len(url_matches)
-                        else len(sent)
+                        url_spans[i + 1][0] if i + 1 < len(url_spans) else len(sent)
                     )
                     part = sent[:next_url_start].strip()
                     result.append(part)
@@ -251,16 +320,50 @@ def _split_urls(sentences: list[str]) -> list[str]:
                     continue
 
             # For subsequent URLs or if no prefix
-            if match.start() >= last_end:
+            if url_start >= last_end:
                 next_url_start = (
-                    url_matches[i + 1].start()
-                    if i + 1 < len(url_matches)
-                    else len(sent)
+                    url_spans[i + 1][0] if i + 1 < len(url_spans) else len(sent)
                 )
-                part = sent[match.start() : next_url_start].strip()
+                part = sent[url_start:next_url_start].strip()
                 if part:
                     result.append(part)
                 last_end = next_url_start
+
+    return result
+
+
+def _find_url_sentence_split_positions(text: str) -> list[int]:
+    positions: list[int] = []
+    for _, url_end in _find_url_spans(text):
+        boundary = url_end
+        while boundary < len(text) and text[boundary] in _CLOSING_PUNCTUATION:
+            boundary += 1
+        if boundary < len(text) and text[boundary] in ".!?":
+            boundary += 1
+            if _is_sentence_start(text, boundary):
+                positions.append(boundary)
+    return sorted(set(positions))
+
+
+def _split_after_url_boundaries(sentences: list[str]) -> list[str]:
+    """Split sentences after URL boundaries when spaCy misses them."""
+    result: list[str] = []
+    for sent in sentences:
+        split_positions = _find_url_sentence_split_positions(sent)
+        if not split_positions:
+            result.append(sent)
+            continue
+
+        start = 0
+        for split_pos in split_positions:
+            part = sent[start:split_pos].strip()
+            if part:
+                result.append(part)
+            start = split_pos
+
+        remaining = sent[start:].strip()
+        if remaining:
+            result.append(remaining)
 
     return result
 
@@ -316,26 +419,23 @@ def _merge_abbreviation_splits(
             match = _ABBREV_END_PATTERN.search(current)
             if match:
                 abbrev = match.group(1)
-                # Check if it's a known abbreviation for this language
-                # BUT skip if it's an abbreviation that commonly ends sentences
-                if abbrev in abbreviations and abbrev not in sentence_ending_abbrevs:
-                    # Check if next sentence starts with a word that's likely a name
-                    # (capital letter, not a common sentence starter)
-                    next_words = next_sent.split()
-                    if next_words:
-                        first_word = next_words[0]
-                        # Merge if first word is capitalized but not a sentence starter
-                        # and not all caps (which might be an acronym/heading)
-                        if (
-                            first_word[0].isupper()
-                            and first_word not in sentence_starters
-                            and not first_word.isupper()
-                        ):
-                            # Merge the sentences
-                            merged = current + " " + next_sent
-                            result.append(merged)
-                            i += 2
-                            continue
+                abbrev_key = abbrev.replace(".", "")
+                is_dotted = "." in abbrev
+                if abbrev_key and abbrev_key not in sentence_ending_abbrevs:
+                    if abbrev_key in abbreviations or is_dotted:
+                        first_word = _extract_leading_word(next_sent)
+                        if first_word:
+                            first_cased = _first_cased_char(first_word)
+                            if (
+                                first_cased
+                                and first_cased.isupper()
+                                and first_word not in sentence_starters
+                                and not first_word.isupper()
+                            ):
+                                merged = current + " " + next_sent
+                                result.append(merged)
+                                i += 2
+                                continue
 
         result.append(current)
         i += 1
@@ -370,33 +470,23 @@ def _split_after_ellipsis(sentences: list[str]) -> list[str]:
     if not sentences:
         return sentences
 
-    # Split sentences containing ellipsis followed by capital letter
     result: list[str] = []
     for sent in sentences:
-        # Check if sentence contains ellipsis followed by capital letter
-        match = _ELLIPSIS_SENTENCE_BREAK.search(sent)
-        if not match:
+        split_positions = _find_ellipsis_split_positions(sent)
+        if not split_positions:
             result.append(sent)
             continue
 
-        # Split at the boundary (keep ellipsis with first part)
-        # We need to handle multiple potential splits in one sentence
-        remaining = sent
-        while True:
-            match = _ELLIPSIS_SENTENCE_BREAK.search(remaining)
-            if not match:
-                if remaining.strip():
-                    result.append(remaining.strip())
-                break
-
-            # Split: everything up to and including ellipsis goes to first part
-            # The capital letter starts the second part
-            split_pos = match.end(1)  # End of ellipsis
-            first_part = remaining[:split_pos].strip()
-            remaining = remaining[split_pos:].strip()
-
+        start = 0
+        for split_pos in split_positions:
+            first_part = sent[start:split_pos].strip()
             if first_part:
                 result.append(first_part)
+            start = split_pos
+
+        remaining = sent[start:].strip()
+        if remaining:
+            result.append(remaining)
 
     return result
 
@@ -413,7 +503,8 @@ def _apply_corrections(
     Corrections applied (in order):
     1. Merge sentences incorrectly split after abbreviations (reduces count)
     2. Split sentences after ellipsis followed by capital letter (increases count)
-    3. Split sentences containing multiple URLs (increases count)
+    3. Split sentences after URL boundaries missed by spaCy (increases count)
+    4. Split sentences containing multiple URLs (increases count)
 
     Note: Colon handling is minimal - we let spaCy handle colons naturally.
     The split_on_colon parameter is kept for API compatibility but currently
@@ -433,6 +524,9 @@ def _apply_corrections(
 
     # Split after ellipsis followed by new sentence
     sentences = _split_after_ellipsis(sentences)
+
+    # Split after URL boundaries missed by spaCy
+    sentences = _split_after_url_boundaries(sentences)
 
     # Split URLs (increases sentence count)
     sentences = _split_urls(sentences)
@@ -547,6 +641,64 @@ def _process_long_text(
             start_idx += 1
 
     return sentences
+
+
+def _process_long_text_with_offsets(
+    text: str,
+    nlp: Language,
+    max_chunk: int = _DEFAULT_MAX_CHUNK_SIZE,
+    safety_margin: int = _DEFAULT_SAFETY_MARGIN,
+) -> list[tuple[int, int]]:
+    """Process text into sentence offsets without exceeding spaCy limits."""
+    effective_max = min(max_chunk, nlp.max_length - safety_margin)
+
+    if len(text) <= effective_max:
+        doc = nlp(text)
+        return [
+            (sent.start_char, sent.end_char)
+            for sent in doc.sents
+            if sent.text and not sent.text.isspace()
+        ]
+
+    offsets: list[tuple[int, int]] = []
+    start_idx = 0
+
+    while start_idx < len(text):
+        end_idx = min(start_idx + effective_max, len(text))
+        chunk = text[start_idx:end_idx]
+        doc = nlp(chunk)
+
+        if end_idx >= len(text):
+            offsets.extend(
+                (start_idx + sent.start_char, start_idx + sent.end_char)
+                for sent in doc.sents
+                if sent.text and not sent.text.isspace()
+            )
+            break
+
+        last_complete_end = 0
+        for sent in doc.sents:
+            if sent.text and not sent.text.isspace():
+                if sent.end_char < len(chunk) - safety_margin:
+                    offsets.append(
+                        (start_idx + sent.start_char, start_idx + sent.end_char)
+                    )
+                    last_complete_end = sent.end_char
+
+        if last_complete_end > 0:
+            start_idx += last_complete_end
+        else:
+            offsets.extend(
+                (start_idx + sent.start_char, start_idx + sent.end_char)
+                for sent in doc.sents
+                if sent.text and not sent.text.isspace()
+            )
+            start_idx = end_idx
+
+        while start_idx < len(text) and text[start_idx] in " \t\n\r":
+            start_idx += 1
+
+    return offsets
 
 
 def split_paragraphs(text: str) -> list[str]:
@@ -1253,19 +1405,23 @@ def _merge_abbreviation_splits_with_offsets(
             match = _ABBREV_END_PATTERN.search(current_text.rstrip())
             if match:
                 abbrev = match.group(1)
-                if abbrev in abbreviations and abbrev not in sentence_ending_abbrevs:
-                    next_words = next_text.split()
-                    if next_words:
-                        first_word = next_words[0]
-                        if (
-                            first_word[0].isupper()
-                            and first_word not in sentence_starters
-                            and not first_word.isupper()
-                        ):
-                            merged_text = text[current_start:next_end]
-                            result.append((merged_text, current_start, next_end))
-                            i += 2
-                            continue
+                abbrev_key = abbrev.replace(".", "")
+                is_dotted = "." in abbrev
+                if abbrev_key and abbrev_key not in sentence_ending_abbrevs:
+                    if abbrev_key in abbreviations or is_dotted:
+                        first_word = _extract_leading_word(next_text)
+                        if first_word:
+                            first_cased = _first_cased_char(first_word)
+                            if (
+                                first_cased
+                                and first_cased.isupper()
+                                and first_word not in sentence_starters
+                                and not first_word.isupper()
+                            ):
+                                merged_text = text[current_start:next_end]
+                                result.append((merged_text, current_start, next_end))
+                                i += 2
+                                continue
 
         result.append((current_text, current_start, current_end))
         i += 1
@@ -1283,26 +1439,27 @@ def _split_after_ellipsis_with_offsets(
     result: list[tuple[str, int, int]] = []
 
     for seg_text, seg_start, seg_end in segments:
-        remaining_start = seg_start
-        remaining_text = seg_text
-
-        while True:
-            match = _ELLIPSIS_SENTENCE_BREAK.search(remaining_text)
-            if not match:
-                trimmed = _trim_segment_bounds(text, remaining_start, seg_end)
-                if trimmed:
-                    start, end = trimmed
-                    result.append((text[start:end], start, end))
-                break
-
-            first_end = remaining_start + match.end(1)
-            trimmed = _trim_segment_bounds(text, remaining_start, first_end)
+        split_positions = _find_ellipsis_split_positions(seg_text)
+        if not split_positions:
+            trimmed = _trim_segment_bounds(text, seg_start, seg_end)
             if trimmed:
                 start, end = trimmed
                 result.append((text[start:end], start, end))
+            continue
 
-            remaining_start = remaining_start + match.start(2)
-            remaining_text = text[remaining_start:seg_end]
+        current_start = seg_start
+        for split_pos in split_positions:
+            absolute_end = seg_start + split_pos
+            trimmed = _trim_segment_bounds(text, current_start, absolute_end)
+            if trimmed:
+                start, end = trimmed
+                result.append((text[start:end], start, end))
+            current_start = absolute_end
+
+        trimmed = _trim_segment_bounds(text, current_start, seg_end)
+        if trimmed:
+            start, end = trimmed
+            result.append((text[start:end], start, end))
 
     return result
 
@@ -1314,25 +1471,19 @@ def _split_urls_with_offsets(
     result: list[tuple[str, int, int]] = []
 
     for seg_text, seg_start, seg_end in segments:
-        if "http://" not in seg_text and "https://" not in seg_text:
-            result.append((seg_text, seg_start, seg_end))
-            continue
+        url_spans = _find_url_spans(seg_text)
 
-        url_matches = list(_URL_PATTERN.finditer(seg_text))
-
-        if len(url_matches) < 2:
+        if len(url_spans) < 2:
             result.append((seg_text, seg_start, seg_end))
             continue
 
         last_end = 0
-        for i, match in enumerate(url_matches):
-            if i == 0 and match.start() > 0:
-                prefix = seg_text[: match.start()].strip()
+        for i, (url_start, _) in enumerate(url_spans):
+            if i == 0 and url_start > 0:
+                prefix = seg_text[:url_start].strip()
                 if prefix:
                     next_url_start = (
-                        url_matches[i + 1].start()
-                        if i + 1 < len(url_matches)
-                        else len(seg_text)
+                        url_spans[i + 1][0] if i + 1 < len(url_spans) else len(seg_text)
                     )
                     part_start = seg_start
                     part_end = seg_start + next_url_start
@@ -1343,19 +1494,46 @@ def _split_urls_with_offsets(
                     last_end = next_url_start
                     continue
 
-            if match.start() >= last_end:
+            if url_start >= last_end:
                 next_url_start = (
-                    url_matches[i + 1].start()
-                    if i + 1 < len(url_matches)
-                    else len(seg_text)
+                    url_spans[i + 1][0] if i + 1 < len(url_spans) else len(seg_text)
                 )
-                part_start = seg_start + match.start()
+                part_start = seg_start + url_start
                 part_end = seg_start + next_url_start
                 trimmed = _trim_segment_bounds(text, part_start, part_end)
                 if trimmed:
                     start, end = trimmed
                     result.append((text[start:end], start, end))
                 last_end = next_url_start
+
+    return result
+
+
+def _split_after_url_boundaries_with_offsets(
+    text: str, segments: list[tuple[str, int, int]]
+) -> list[tuple[str, int, int]]:
+    """Split sentences after URL boundaries while preserving offsets."""
+    result: list[tuple[str, int, int]] = []
+
+    for seg_text, seg_start, seg_end in segments:
+        split_positions = _find_url_sentence_split_positions(seg_text)
+        if not split_positions:
+            result.append((seg_text, seg_start, seg_end))
+            continue
+
+        current_start = seg_start
+        for split_pos in split_positions:
+            absolute_end = seg_start + split_pos
+            trimmed = _trim_segment_bounds(text, current_start, absolute_end)
+            if trimmed:
+                start, end = trimmed
+                result.append((text[start:end], start, end))
+            current_start = absolute_end
+
+        trimmed = _trim_segment_bounds(text, current_start, seg_end)
+        if trimmed:
+            start, end = trimmed
+            result.append((text[start:end], start, end))
 
     return result
 
@@ -1368,11 +1546,12 @@ def _apply_corrections_with_offsets(
     """Apply sentence corrections while preserving exact offsets."""
     segments = _merge_abbreviation_splits_with_offsets(text, segments, language_model)
     segments = _split_after_ellipsis_with_offsets(text, segments)
+    segments = _split_after_url_boundaries_with_offsets(text, segments)
     segments = _split_urls_with_offsets(text, segments)
     return segments
 
 
-def _simple_sentence_split_preserving_offsets(
+def _simple_sentence_split_preserving_offsets(  # noqa: C901
     text: str, language_model: str = "en"
 ) -> list[tuple[str, int, int]]:
     """Split text into sentences using simple regex, preserving exact character offsets.
@@ -1395,39 +1574,49 @@ def _simple_sentence_split_preserving_offsets(
     # But DO split on sentence-ending abbreviations like "Inc.", "Ltd."
     abbreviations = get_abbreviations(language_model)
     sentence_ending_abbrevs = get_sentence_ending_abbreviations()
+    sentence_starters = get_sentence_starters()
 
-    # Split on sentence-ending punctuation followed by space and capital
-    sentence_pattern = re.compile(r"([.!?]+)\s+(?=[A-Z])")
+    # Split on sentence-ending punctuation followed by a new sentence start
+    sentence_pattern = re.compile(r"[.!?]+")
 
     sentences = []
     last_end = 0
 
     for match in sentence_pattern.finditer(text):
-        # Check if this match is preceded by an abbreviation
-        # Look backward from the period to see if it's part of an abbreviation
         match_start = match.start()
+        match_end = match.end()
+
+        if match_end >= len(text) or not text[match_end].isspace():
+            continue
+
+        if not _is_sentence_start(text, match_end):
+            continue
+
         is_abbreviation = False
+        token_start = match_start - 1
+        while token_start >= 0 and not text[token_start].isspace():
+            token_start -= 1
+        token = text[token_start + 1 : match_start]
+        token = token.strip(_CLOSING_PUNCTUATION)
+        abbrev_token = token.rstrip(".")
+        abbrev_key = abbrev_token.replace(".", "")
+        dotted_acronym = "." in abbrev_token and all(
+            char.isalpha() or char == "." for char in abbrev_token
+        )
 
-        # The period is at match_start, so we look backward from there
-        # Abbreviations are stored without periods, e.g., "Dr", "Inc"
-        for abbrev in abbreviations:
-            # Look back from the period to see if abbreviation matches
-            abbrev_len = len(abbrev)
-            if match_start >= abbrev_len:
-                # Check if the text before the period matches the abbreviation
-                candidate = text[match_start - abbrev_len : match_start]
-                if candidate == abbrev:
-                    # Found an abbreviation, but check if it's sentence-ending
-                    if abbrev not in sentence_ending_abbrevs:
-                        is_abbreviation = True
-                    break
+        if abbrev_key:
+            if abbrev_key in sentence_ending_abbrevs:
+                is_abbreviation = False
+            elif abbrev_key in abbreviations or dotted_acronym:
+                next_word = _extract_leading_word(text[match_end:])
+                if dotted_acronym and next_word and next_word in sentence_starters:
+                    is_abbreviation = False
+                else:
+                    is_abbreviation = True
 
-        # Skip this match if it's a non-sentence-ending abbreviation
         if is_abbreviation:
             continue
 
-        # Match end is after the punctuation and whitespace
-        # We want to include the punctuation but split after the whitespace
         sent_end = match.end()
         sent_text = text[last_end:sent_end].strip()
 
@@ -1680,19 +1869,14 @@ def _split_with_offsets_spacy(
             para_idx += 1
             continue
 
-        # Process with spaCy on the exact paragraph text
         protected_para = _protect_ellipsis(para_text)
-        doc = nlp(protected_para)
+        sent_offsets = _process_long_text_with_offsets(protected_para, nlp)
 
         sentences: list[tuple[str, int, int]] = []
-        for sent in doc.sents:
-            sent_start_in_para = sent.start_char
-            sent_end_in_para = sent.end_char
+        for sent_start_in_para, sent_end_in_para in sent_offsets:
             sent_text = para_text[sent_start_in_para:sent_end_in_para]
-
             if not sent_text or sent_text.isspace():
                 continue
-
             sent_start = para_start + sent_start_in_para
             sent_end = para_start + sent_end_in_para
             sentences.append((sent_text, sent_start, sent_end))

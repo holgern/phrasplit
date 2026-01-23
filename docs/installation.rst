@@ -32,7 +32,7 @@ For higher accuracy sentence splitting with spaCy NLP:
 
 .. code-block:: bash
 
-   pip install phrasplit[spacy]
+   pip install phrasplit[nlp]
 
 Or install spaCy separately:
 
@@ -62,7 +62,7 @@ For spaCy support when installing from source:
 
 .. code-block:: bash
 
-   pip install -e ".[spacy]"
+   pip install -e ".[nlp]"
 
 Installing spaCy Language Models
 ---------------------------------

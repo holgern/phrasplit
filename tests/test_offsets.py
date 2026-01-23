@@ -164,6 +164,84 @@ class TestSplitWithOffsets:
             extracted = text[seg.char_start : seg.char_end]
             assert seg.text.strip() == extracted.strip()
 
+    def test_abbreviation_merge_with_quotes_offsets(self) -> None:
+        """Test abbreviation merging with quotes in offset mode."""
+        pytest.importorskip("spacy")
+
+        text = 'Dr. "Smith" arrived.'
+        segments = split_with_offsets(text, mode="sentence", use_spacy=True)
+        assert [seg.text for seg in segments] == ['Dr. "Smith" arrived.']
+        for seg in segments:
+            assert text[seg.char_start : seg.char_end] == seg.text
+
+    def test_abbreviation_merge_with_brackets_offsets(self) -> None:
+        """Test abbreviation merging with brackets in offset mode."""
+        pytest.importorskip("spacy")
+
+        text = "Prof. (Müller) sagte nein. Dann ging er."
+        segments = split_with_offsets(text, mode="sentence", use_spacy=True)
+        assert [seg.text for seg in segments] == [
+            "Prof. (Müller) sagte nein.",
+            "Dann ging er.",
+        ]
+        for seg in segments:
+            assert text[seg.char_start : seg.char_end] == seg.text
+
+    @pytest.mark.parametrize("use_spacy", [False, True])
+    def test_dotted_acronyms_offsets(self, use_spacy: bool) -> None:
+        """Test dotted acronyms are preserved in offset mode."""
+        if use_spacy:
+            pytest.importorskip("spacy")
+
+        text = "He lives in the U.S. He moved last year."
+        segments = split_with_offsets(text, mode="sentence", use_spacy=use_spacy)
+        assert [seg.text for seg in segments] == [
+            "He lives in the U.S.",
+            "He moved last year.",
+        ]
+        for seg in segments:
+            assert text[seg.char_start : seg.char_end] == seg.text
+
+        text = "Das ist z.B. gut. Wirklich."
+        segments = split_with_offsets(text, mode="sentence", use_spacy=use_spacy)
+        assert [seg.text for seg in segments] == ["Das ist z.B. gut.", "Wirklich."]
+        for seg in segments:
+            assert text[seg.char_start : seg.char_end] == seg.text
+
+    @pytest.mark.parametrize("use_spacy", [False, True])
+    def test_url_offsets_with_www_and_bare_domains(self, use_spacy: bool) -> None:
+        """Test offsets with www and bare-domain URLs."""
+        if use_spacy:
+            pytest.importorskip("spacy")
+
+        text = "See www.example.com. It works."
+        segments = split_with_offsets(text, mode="sentence", use_spacy=use_spacy)
+        assert [seg.text for seg in segments] == ["See www.example.com.", "It works."]
+        for seg in segments:
+            assert text[seg.char_start : seg.char_end] == seg.text
+
+        text = "Visit example.com/path). Then continue."
+        segments = split_with_offsets(text, mode="sentence", use_spacy=use_spacy)
+        assert [seg.text for seg in segments] == [
+            "Visit example.com/path).",
+            "Then continue.",
+        ]
+        for seg in segments:
+            assert text[seg.char_start : seg.char_end] == seg.text
+
+    @pytest.mark.parametrize("use_spacy", [False, True])
+    def test_ellipsis_offsets_unicode_digits(self, use_spacy: bool) -> None:
+        """Test ellipsis boundaries with unicode and digits in offset mode."""
+        if use_spacy:
+            pytest.importorskip("spacy")
+
+        text = "Wait... 2025 was wild. True."
+        segments = split_with_offsets(text, mode="sentence", use_spacy=use_spacy)
+        assert segments[0].text == "Wait..."
+        assert segments[1].text.startswith("2025")
+        for seg in segments:
+            assert text[seg.char_start : seg.char_end] == seg.text
+
 
 class TestOffsetCorrections:
     """Tests for offset-preserving corrections."""
@@ -208,6 +286,34 @@ class TestOffsetCorrections:
             "He was tired....",
             "The next day he left.",
         ]
+
+
+class TestSpacyOffsetChunking:
+    """Tests for spaCy offset chunking on long text."""
+
+    def test_spacy_offset_chunking_long_paragraph(self) -> None:
+        """Ensure long texts are chunked without max_length errors."""
+        pytest.importorskip("spacy")
+
+        from phrasplit.splitter import _get_nlp
+
+        nlp = _get_nlp("en_core_web_sm")
+        original_max = nlp.max_length
+        try:
+            nlp.max_length = 500
+            chunk = "Hello world. "
+            repeat_count = (nlp.max_length // len(chunk)) + 5
+            text = chunk * repeat_count
+
+            segments = split_with_offsets(text, mode="sentence", use_spacy=True)
+
+            assert segments
+            assert len(segments) == repeat_count
+            assert all(seg.text == "Hello world." for seg in segments)
+            for seg in segments:
+                assert text[seg.char_start : seg.char_end] == seg.text
+        finally:
+            nlp.max_length = original_max
 
 
 class TestStableIDs:

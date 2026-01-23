@@ -26,10 +26,9 @@ split_sentences
    # Use simple mode (no spaCy required)
    sentences = split_sentences(text, use_spacy=False)
 
-   # Disable colon splitting
+   # split_on_colon is deprecated (kept for compatibility only)
    text = "Note: This is important."
    sentences = split_sentences(text, split_on_colon=False)
-   # ['Note: This is important.']
 
 split_clauses
 ^^^^^^^^^^^^^

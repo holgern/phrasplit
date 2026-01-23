@@ -23,6 +23,7 @@ from phrasplit.abbreviations import get_abbreviations
 
 # Import preprocessing functions from main splitter
 from phrasplit.splitter import (
+    _find_ellipsis_split_positions,
     _preprocess_text,
     _protect_ellipsis,
     _restore_ellipsis,
@@ -42,6 +43,7 @@ _DIGITS = re.compile(r"(?<=\d)\.(?=\d)")
 _MULTIPLE_DOTS = re.compile(r"\.{3,}")
 _INITIALS = re.compile(r"\b([A-Z])\.(?=[A-Z]\.)")
 _SINGLE_INITIAL = re.compile(r"\b([A-Z])\.")
+_LETTER_PATTERN = r"[^\W\d_]"
 
 # Common sentence starters for English (used to identify sentence boundaries)
 _SENTENCE_STARTERS = re.compile(
@@ -53,6 +55,20 @@ _SENTENCE_STARTERS = re.compile(
 _PROTECTED_PERIOD = "<prd>"
 _SENTENCE_BOUNDARY = "<stop>"
 _ELLIPSIS_MARKER = "<ellip>"
+
+
+def _insert_ellipsis_boundaries(text: str) -> str:
+    positions = _find_ellipsis_split_positions(text)
+    if not positions:
+        return text
+    parts: list[str] = []
+    last_idx = 0
+    for pos in positions:
+        parts.append(text[last_idx:pos])
+        parts.append(_SENTENCE_BOUNDARY)
+        last_idx = pos
+    parts.append(text[last_idx:])
+    return "".join(parts)
 
 
 def _build_language_patterns(language_model: str) -> dict[str, re.Pattern[str]]:
@@ -120,8 +136,10 @@ def _build_language_patterns(language_model: str) -> dict[str, re.Pattern[str]]:
     else:
         patterns["suffixes"] = re.compile(r"(?!)")
 
-    # Acronyms: 2+ capital letters each followed by period
-    patterns["acronyms"] = re.compile(r"\b(?:[A-Z]\.){2,}(?:[A-Z]\.?)?")
+    # Acronyms: 2+ short letter segments each followed by period
+    patterns["acronyms"] = re.compile(
+        rf"\b(?:{_LETTER_PATTERN}{{1,3}}\.){{2,}}{_LETTER_PATTERN}{{0,3}}\.?"
+    )
 
     return patterns
 
@@ -175,11 +193,7 @@ def split_sentences_simple(
         # If an ellipsis clearly ends a sentence, mark a boundary *before* we
         # protect ellipsis dots (which would otherwise remove '.'
         # and hide the boundary).
-        text = re.sub(
-            r'((?:\.{3,}|\.\s\.\s\.|…)(?:["\'\)\]\}\u201d\u2019]+)?)\s+(?=["\'\u201c\u201d\u2018\u2019]*[A-Z])',
-            r"\1" + _SENTENCE_BOUNDARY + " ",
-            text,
-        )
+        text = _insert_ellipsis_boundaries(text)
 
         # Protect ellipsis (reuse from main splitter)
         text = _protect_ellipsis(text)
@@ -189,39 +203,39 @@ def split_sentences_simple(
 
         # Protect periods in various contexts (replace with placeholder)
 
-        # 1. Language-specific prefixes (Mr., Dr., Prof., etc.)
+        # 1. Acronyms (U.S.A., J.R.R., z.B., etc.)
+        text = patterns["acronyms"].sub(
+            lambda m: m.group().replace(".", _PROTECTED_PERIOD), text
+        )
+
+        # 2. Language-specific prefixes (Mr., Dr., Prof., etc.)
         text = patterns["prefixes"].sub(
             lambda m: m.group().replace(".", _PROTECTED_PERIOD), text
         )
 
-        # 2. Language-specific suffixes (Inc., Ltd., Co., etc.)
+        # 3. Language-specific suffixes (Inc., Ltd., Co., etc.)
         text = patterns["suffixes"].sub(
             lambda m: m.group().replace(".", _PROTECTED_PERIOD), text
         )
 
-        # 3. Websites and URLs
+        # 4. Websites and URLs
         text = _WEBSITES.sub(lambda m: m.group().replace(".", _PROTECTED_PERIOD), text)
 
-        # 3b. File extensions (file.md, docs/v2.0.1.txt, etc.)
+        # 4b. File extensions (file.md, docs/v2.0.1.txt, etc.)
         text = _FILE_EXTENSIONS.sub(
             lambda m: m.group().replace(".", _PROTECTED_PERIOD), text
         )
 
-        # 4. Numbers with decimals (3.14 → 3<prd>14)
+        # 5. Numbers with decimals (3.14 → 3<prd>14)
         text = _DIGITS.sub(_PROTECTED_PERIOD, text)
 
-        # 5. Common multi-letter abbreviations (Ph.D., e.g., i.e., etc.)
+        # 6. Common multi-letter abbreviations (Ph.D., e.g., i.e., etc.)
         text = re.sub(r"\bPh\.D\.?", f"Ph{_PROTECTED_PERIOD}D{_PROTECTED_PERIOD}", text)
         text = re.sub(r"\be\.g\.", f"e{_PROTECTED_PERIOD}g{_PROTECTED_PERIOD}", text)
         text = re.sub(r"\bi\.e\.", f"i{_PROTECTED_PERIOD}e{_PROTECTED_PERIOD}", text)
         text = re.sub(r"\betc\.", f"etc{_PROTECTED_PERIOD}", text)
         text = re.sub(r"\bvs\.", f"vs{_PROTECTED_PERIOD}", text)
         text = re.sub(r"\bal\.", f"al{_PROTECTED_PERIOD}", text)  # et al.
-
-        # 6. Acronyms (U.S.A., J.R.R., etc.)
-        text = patterns["acronyms"].sub(
-            lambda m: m.group().replace(".", _PROTECTED_PERIOD), text
-        )
 
         # 7. Single initials (E. coli, J. Smith)
         text = _INITIALS.sub(rf"\1{_PROTECTED_PERIOD}", text)
@@ -231,6 +245,18 @@ def split_sentences_simple(
         text = re.sub(
             rf"\b([A-Z]){_PROTECTED_PERIOD} ([A-Z]){_PROTECTED_PERIOD}",
             rf"\1{_PROTECTED_PERIOD}\2{_PROTECTED_PERIOD}",
+            text,
+        )
+
+        # Allow sentence boundaries after dotted acronyms when followed by
+        # a common sentence starter (e.g., "U.S. He ...")
+        acronym_boundary_pattern = (
+            rf"(\b(?:{_LETTER_PATTERN}+{_PROTECTED_PERIOD}){{2,}}) "
+            rf"(?={_SENTENCE_STARTERS.pattern})"
+        )
+        text = re.sub(
+            acronym_boundary_pattern,
+            rf"\1{_SENTENCE_BOUNDARY} ",
             text,
         )
 

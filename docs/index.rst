@@ -50,7 +50,7 @@ Install with spaCy support (recommended):
 
 .. code-block:: bash
 
-   pip install phrasplit[spacy]
+   pip install phrasplit[nlp]
    python -m spacy download en_core_web_sm
 
 Quick Start
