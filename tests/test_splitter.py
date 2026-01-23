@@ -52,6 +52,11 @@ class TestSplitSentences:
         # Should not contain spaced ellipsis (that would indicate transformation)
         assert not any(". . ." in s for s in result)
 
+        text = "'I can't... or shouldn't,' I replied."
+        result = split_sentences(text)
+        assert len(result) == 1
+        assert any("..." in s for s in result)
+
     def test_common_abbreviations(self) -> None:
         """Test abbreviations like Mr., Prof., U.S.A. that shouldn't split sentences."""
         text = "Mr. Brown met Prof. Green. They discussed the U.S.A. case."

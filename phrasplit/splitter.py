@@ -1214,6 +1214,164 @@ def _validate_offset_segments(text: str, segments: list[SplitSegment]) -> None:
         last_end = seg.char_end
 
 
+def _trim_segment_bounds(text: str, start: int, end: int) -> tuple[int, int] | None:
+    """Trim whitespace from the segment boundaries without altering offsets."""
+    while start < end and text[start].isspace():
+        start += 1
+    while end > start and text[end - 1].isspace():
+        end -= 1
+    if start >= end:
+        return None
+    return start, end
+
+
+def _merge_abbreviation_splits_with_offsets(
+    text: str,
+    segments: list[tuple[str, int, int]],
+    language_model: str = "en_core_web_sm",
+) -> list[tuple[str, int, int]]:
+    """Merge abbreviation splits while preserving exact offsets."""
+    if len(segments) <= 1:
+        return segments
+
+    abbreviations = get_abbreviations(language_model)
+    if not abbreviations:
+        return segments
+
+    sentence_starters = get_sentence_starters()
+    sentence_ending_abbrevs = get_sentence_ending_abbreviations()
+
+    result: list[tuple[str, int, int]] = []
+    i = 0
+
+    while i < len(segments):
+        current_text, current_start, current_end = segments[i]
+
+        if i + 1 < len(segments):
+            next_text, next_start, next_end = segments[i + 1]
+
+            match = _ABBREV_END_PATTERN.search(current_text.rstrip())
+            if match:
+                abbrev = match.group(1)
+                if abbrev in abbreviations and abbrev not in sentence_ending_abbrevs:
+                    next_words = next_text.split()
+                    if next_words:
+                        first_word = next_words[0]
+                        if (
+                            first_word[0].isupper()
+                            and first_word not in sentence_starters
+                            and not first_word.isupper()
+                        ):
+                            merged_text = text[current_start:next_end]
+                            result.append((merged_text, current_start, next_end))
+                            i += 2
+                            continue
+
+        result.append((current_text, current_start, current_end))
+        i += 1
+
+    return result
+
+
+def _split_after_ellipsis_with_offsets(
+    text: str, segments: list[tuple[str, int, int]]
+) -> list[tuple[str, int, int]]:
+    """Split sentences after ellipsis boundaries while preserving offsets."""
+    if not segments:
+        return segments
+
+    result: list[tuple[str, int, int]] = []
+
+    for seg_text, seg_start, seg_end in segments:
+        remaining_start = seg_start
+        remaining_text = seg_text
+
+        while True:
+            match = _ELLIPSIS_SENTENCE_BREAK.search(remaining_text)
+            if not match:
+                trimmed = _trim_segment_bounds(text, remaining_start, seg_end)
+                if trimmed:
+                    start, end = trimmed
+                    result.append((text[start:end], start, end))
+                break
+
+            first_end = remaining_start + match.end(1)
+            trimmed = _trim_segment_bounds(text, remaining_start, first_end)
+            if trimmed:
+                start, end = trimmed
+                result.append((text[start:end], start, end))
+
+            remaining_start = remaining_start + match.start(2)
+            remaining_text = text[remaining_start:seg_end]
+
+    return result
+
+
+def _split_urls_with_offsets(
+    text: str, segments: list[tuple[str, int, int]]
+) -> list[tuple[str, int, int]]:
+    """Split sentences containing multiple URLs while preserving offsets."""
+    result: list[tuple[str, int, int]] = []
+
+    for seg_text, seg_start, seg_end in segments:
+        if "http://" not in seg_text and "https://" not in seg_text:
+            result.append((seg_text, seg_start, seg_end))
+            continue
+
+        url_matches = list(_URL_PATTERN.finditer(seg_text))
+
+        if len(url_matches) < 2:
+            result.append((seg_text, seg_start, seg_end))
+            continue
+
+        last_end = 0
+        for i, match in enumerate(url_matches):
+            if i == 0 and match.start() > 0:
+                prefix = seg_text[: match.start()].strip()
+                if prefix:
+                    next_url_start = (
+                        url_matches[i + 1].start()
+                        if i + 1 < len(url_matches)
+                        else len(seg_text)
+                    )
+                    part_start = seg_start
+                    part_end = seg_start + next_url_start
+                    trimmed = _trim_segment_bounds(text, part_start, part_end)
+                    if trimmed:
+                        start, end = trimmed
+                        result.append((text[start:end], start, end))
+                    last_end = next_url_start
+                    continue
+
+            if match.start() >= last_end:
+                next_url_start = (
+                    url_matches[i + 1].start()
+                    if i + 1 < len(url_matches)
+                    else len(seg_text)
+                )
+                part_start = seg_start + match.start()
+                part_end = seg_start + next_url_start
+                trimmed = _trim_segment_bounds(text, part_start, part_end)
+                if trimmed:
+                    start, end = trimmed
+                    result.append((text[start:end], start, end))
+                last_end = next_url_start
+
+    return result
+
+
+def _apply_corrections_with_offsets(
+    text: str,
+    segments: list[tuple[str, int, int]],
+    language_model: str = "en_core_web_sm",
+) -> list[tuple[str, int, int]]:
+    """Apply sentence corrections while preserving exact offsets."""
+    segments = _merge_abbreviation_splits_with_offsets(text, segments, language_model)
+    segments = _split_after_ellipsis_with_offsets(text, segments)
+    segments = _split_urls_with_offsets(text, segments)
+    return segments
+
+
 def _simple_sentence_split_preserving_offsets(
     text: str, language_model: str = "en"
 ) -> list[tuple[str, int, int]]:
@@ -1458,6 +1616,7 @@ def _split_with_offsets_spacy(
     language_model: str = "en_core_web_sm",
     mode: str = "sentence",
     max_chars: int | None = None,
+    apply_corrections: bool = True,
 ) -> list[SplitSegment]:
     """Split text using spaCy-based approach with character offsets.
 
@@ -1466,6 +1625,9 @@ def _split_with_offsets_spacy(
         language_model: spaCy language model name
         mode: Splitting mode ("paragraph", "sentence", or "clause")
         max_chars: Optional maximum segment length
+        apply_corrections: Whether to apply post-processing corrections for
+            common spaCy errors (URL splitting, abbreviation handling, ellipsis).
+            Default is True.
 
     Returns:
         List of SplitSegment objects with character offsets
@@ -1522,23 +1684,23 @@ def _split_with_offsets_spacy(
         protected_para = _protect_ellipsis(para_text)
         doc = nlp(protected_para)
 
-        sent_idx = 0
+        sentences: list[tuple[str, int, int]] = []
         for sent in doc.sents:
-            # Use spaCy's character offsets directly (relative to protected_para)
-            # These point to the exact slice in protected_para
             sent_start_in_para = sent.start_char
             sent_end_in_para = sent.end_char
-
-            # Extract exact slice from original paragraph
             sent_text = para_text[sent_start_in_para:sent_end_in_para]
 
             if not sent_text or sent_text.isspace():
                 continue
 
-            # Calculate absolute character offsets in original text
             sent_start = para_start + sent_start_in_para
             sent_end = para_start + sent_end_in_para
+            sentences.append((sent_text, sent_start, sent_end))
 
+        if apply_corrections:
+            sentences = _apply_corrections_with_offsets(text, sentences, language_model)
+
+        for sent_idx, (sent_text, sent_start, sent_end) in enumerate(sentences):
             if mode == "sentence":
                 seg_id = _make_segment_id(para_idx, sent_idx)
                 segment = SplitSegment(
@@ -1557,7 +1719,6 @@ def _split_with_offsets_spacy(
                 clause_search_start = 0
 
                 for clause_idx, clause_text in enumerate(clauses):
-                    # Find clause within sentence
                     clause_offset = sent_text.find(clause_text, clause_search_start)
                     if clause_offset == -1:
                         clause_offset = clause_search_start
@@ -1578,8 +1739,6 @@ def _split_with_offsets_spacy(
                         meta={"method": "spacy", "mode": "clause"},
                     )
                     result.append(segment)
-
-            sent_idx += 1
 
         para_idx += 1
 
@@ -1689,6 +1848,7 @@ def split_with_offsets(
     mode: str = "sentence",
     use_spacy: bool | None = None,
     language_model: str = "en_core_web_sm",
+    apply_corrections: bool = True,
     max_chars: int | None = None,
 ) -> list[SplitSegment]:
     """Split text into segments with character offsets and stable IDs.
@@ -1728,6 +1888,9 @@ def split_with_offsets(
             - False: Force regex-based splitting
         language_model: Language model name (e.g., "en_core_web_sm", "de_core_news_sm")
             Used for both spaCy model selection and abbreviation handling
+        apply_corrections: Whether to apply post-processing corrections for
+            common spaCy errors (URL splitting, abbreviation handling, ellipsis).
+            Default is True. Only applies to spaCy mode.
         max_chars: Optional maximum segment length. Segments exceeding this
             will be split further at whitespace/punctuation boundaries while
             maintaining the exact-slice invariant. Split segments get IDs
@@ -1785,7 +1948,13 @@ def split_with_offsets(
         )
 
     if use_spacy:
-        segments = _split_with_offsets_spacy(text, language_model, mode, max_chars)
+        segments = _split_with_offsets_spacy(
+            text,
+            language_model,
+            mode,
+            max_chars,
+            apply_corrections,
+        )
     else:
         segments = _split_with_offsets_regex(text, language_model, mode, max_chars)
 
@@ -1799,6 +1968,7 @@ def iter_split_with_offsets(
     mode: str = "sentence",
     use_spacy: bool | None = None,
     language_model: str = "en_core_web_sm",
+    apply_corrections: bool = True,
     max_chars: int | None = None,
 ) -> Iterator[SplitSegment]:
     """Streaming iterator variant of split_with_offsets().
@@ -1811,6 +1981,9 @@ def iter_split_with_offsets(
         mode: Splitting granularity ("paragraph", "sentence", or "clause")
         use_spacy: Backend selection (None=auto, True=spaCy, False=regex)
         language_model: Language model name for NLP/abbreviations
+        apply_corrections: Whether to apply post-processing corrections for
+            common spaCy errors (URL splitting, abbreviation handling, ellipsis).
+            Default is True. Only applies to spaCy mode.
         max_chars: Optional maximum segment length
 
     Yields:
@@ -1836,6 +2009,7 @@ def iter_split_with_offsets(
         mode=mode,
         use_spacy=use_spacy,
         language_model=language_model,
+        apply_corrections=apply_corrections,
         max_chars=max_chars,
     )
     yield from segments

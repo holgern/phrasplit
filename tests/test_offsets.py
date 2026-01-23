@@ -10,6 +10,10 @@ from phrasplit import (
     suggest_splitting_mode,
     validate_no_placeholder_breaks,
 )
+from phrasplit.splitter import (
+    _apply_corrections_with_offsets,
+    _split_after_ellipsis_with_offsets,
+)
 
 
 class TestSplitWithOffsets:
@@ -159,6 +163,51 @@ class TestSplitWithOffsets:
             # Handle potential whitespace differences
             extracted = text[seg.char_start : seg.char_end]
             assert seg.text.strip() == extracted.strip()
+
+
+class TestOffsetCorrections:
+    """Tests for offset-preserving corrections."""
+
+    def test_apply_corrections_with_offsets_merges_and_splits_urls(self) -> None:
+        """Test abbreviation merging and URL splitting with offsets."""
+        text = "Dr. Smith recommends https://a.com https://b.com today."
+        segments = [(text[:3], 0, 3), (text[4:], 4, len(text))]
+
+        result = _apply_corrections_with_offsets(text, segments, "en_core_web_sm")
+
+        assert len(result) == 2
+        assert result[0][0] == "Dr. Smith recommends https://a.com"
+        assert result[1][0] == "https://b.com today."
+
+        for seg_text, start, end in result:
+            assert text[start:end] == seg_text
+
+    def test_split_after_ellipsis_with_offsets(self) -> None:
+        """Test ellipsis splitting preserves exact offsets."""
+        text = "He was tired.... The next day he left."
+        segments = [(text, 0, len(text))]
+
+        result = _split_after_ellipsis_with_offsets(text, segments)
+
+        assert [seg[0] for seg in result] == [
+            "He was tired....",
+            "The next day he left.",
+        ]
+
+        for seg_text, start, end in result:
+            assert text[start:end] == seg_text
+
+    def test_spacy_offsets_apply_corrections_ellipsis(self) -> None:
+        """Test spaCy offsets apply ellipsis corrections."""
+        pytest.importorskip("spacy")
+
+        text = "He was tired.... The next day he left."
+        segments = split_with_offsets(text, mode="sentence", use_spacy=True)
+
+        assert [seg.text for seg in segments] == [
+            "He was tired....",
+            "The next day he left.",
+        ]
 
 
 class TestStableIDs:
