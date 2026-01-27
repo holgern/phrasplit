@@ -7,4 +7,3 @@ exclude = ["examples", "*/.venv/*"]
 include = ["**/*.py", "**/*.toml", "**/*.rst"]
 split_max_chars = 25000000
 layout = "full"
-
