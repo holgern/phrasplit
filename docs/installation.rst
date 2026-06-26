@@ -48,7 +48,7 @@ To install from source, clone the repository and install:
 
 .. code-block:: bash
 
-   git clone https://github.com/holgern/phrasplit.git
+   git clone https://github.com/buchwandler/phrasplit.git
    cd phrasplit
    pip install -e .
 

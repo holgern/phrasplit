@@ -15,7 +15,7 @@ license = {file = "LICENSE"}
 authors = [
     {name = "Holger Nahrstaedt", email = "nahrstaedt@gmail.com"}
 ]
-urls = { Homepage = "https://github.com/holgern/phrasplit" }
+urls = { Homepage = "https://github.com/buchwandler/phrasplit" }
 dependencies = [
     "click>=8.0.0",
     "rich>=13.0.0",
